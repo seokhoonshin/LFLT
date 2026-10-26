@@ -509,6 +509,9 @@ def validate_rows(
     geocoded_rows: list[int] = []
     geocode_failures: list[RowIssue] = []
     missing = [p for p in parsed if p["latitude"] is None]
+    if settings.geocode_mode == "address" and geocoder is not None:
+        # every row is placed by its street address; file coordinates are only a fallback
+        missing = list(parsed)
     if missing:
         if geocoder is None:
             for p in missing:
@@ -535,6 +538,17 @@ def validate_rows(
                 if res and res.matched:
                     p["latitude"], p["longitude"] = res.latitude, res.longitude
                     geocoded_rows.append(p["source_row"])
+                elif p["latitude"] is not None:
+                    warnings.append(
+                        RowIssue(
+                            p["source_row"],
+                            f"Address could not be geocoded: {p['address']}, {p['city']}, {p['state']} "
+                            f"{p['zip']}; using the latitude/longitude from the file.",
+                            "warning",
+                            p["shipment_id"],
+                            "address",
+                        )
+                    )
                 else:
                     geocode_failures.append(
                         RowIssue(

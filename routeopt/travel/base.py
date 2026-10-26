@@ -33,6 +33,30 @@ class Matrix(BaseModel):
     def distance_miles(self, i: int, j: int) -> float:
         return self.distances_m[i][j] / 1609.344
 
+    def with_same_location_floor(
+        self, min_seconds: int, within_m: int = 160, first_stop: int = 1
+    ) -> Matrix:
+        """Copy where two different stops (nodes from ``first_stop`` on; the depots come
+        first) less than ``within_m`` apart
+        take at least ``min_seconds`` to drive between - e.g. two addresses both placed on
+        one ZIP centroid, which the map would otherwise treat as 0 minutes apart."""
+        if min_seconds <= 0:
+            return self
+        durations = [row[:] for row in self.durations_s]
+        changed = 0
+        for i in range(first_stop, self.n):
+            for j in range(first_stop, self.n):
+                if i != j and self.distances_m[i][j] < within_m and durations[i][j] < min_seconds:
+                    durations[i][j] = min_seconds
+                    changed += 1
+        if not changed:
+            return self
+        note = (
+            f"{changed // 2 or changed} stop pair(s) on the same point given at least "
+            f"{min_seconds // 60} min of driving."
+        )
+        return self.model_copy(update={"durations_s": durations, "notes": [*self.notes, note]})
+
     def submatrix(self, index: list[int]) -> Matrix:
         """Matrix restricted / re-ordered to the given node indices."""
         return Matrix(

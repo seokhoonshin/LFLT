@@ -209,3 +209,15 @@ def test_select_provider_auto_falls_back_and_forced_osrm_raises() -> None:
     forced = select_provider(make_settings(travel_provider="haversine"), app, osrm=up)
     assert forced.name == "haversine" and not forced.fallback_used
     assert json.dumps(choice2.reason)
+
+
+def test_same_location_floor_only_between_distinct_stops_on_one_point() -> None:
+    p = point_at(10, 0)
+    m = HaversineProvider(1.3, 30.0).matrix([(HUB_LAT, HUB_LON), p, p, point_at(20, 90)])
+    assert m.duration(1, 2) == 0
+    floored = m.with_same_location_floor(600)
+    assert floored.duration(1, 2) == 600 and floored.duration(2, 1) == 600
+    assert floored.duration(1, 1) == 0  # same node
+    assert floored.duration(1, 3) == m.duration(1, 3)  # far apart: unchanged
+    assert floored.duration(0, 1) == m.duration(0, 1)  # hub untouched
+    assert m.with_same_location_floor(0) is m

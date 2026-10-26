@@ -23,6 +23,7 @@ LunchMode = Literal["smart", "simple"]
 TravelProviderChoice = Literal["auto", "osrm", "haversine"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
 ObsMode = Literal["last", "exclude", "normal"]
+GeocodeMode = Literal["address", "fill"]
 ProfileName = Literal["ca_lflt", "legacy"]
 
 # Values a profile supplies for every setting the caller does not give explicitly.
@@ -46,6 +47,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "require_shipment_suffix": False,
         "coverage_radius_miles": 200.0,
         "trucks_selected": ["T01", "T02"],
+        "geocode_mode": "address",
+        "same_location_travel_minutes": 15,
     },
     "legacy": {
         "shift_start": dt.time(8, 0),
@@ -64,6 +67,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "require_shipment_suffix": True,
         "coverage_radius_miles": 75.0,
         "trucks_selected": [],
+        "geocode_mode": "fill",
+        "same_location_travel_minutes": 0,
     },
 }
 
@@ -139,6 +144,8 @@ class RunSettings(BaseModel):
     haversine_avg_speed_mph: float = 30.0
     obs_mode: ObsMode = "last"
     obs_radius_miles: float = 5.0
+    geocode_mode: GeocodeMode = "address"
+    same_location_travel_minutes: int = 15
     pull_forward_value_minutes: dict[int, int] = Field(
         default_factory=lambda: dict(DEFAULT_PULL_FORWARD_VALUE_MINUTES)
     )
@@ -190,6 +197,13 @@ class RunSettings(BaseModel):
     def _check_obs_radius(cls, v: float) -> float:
         if not 0 < v <= 50:
             raise ValueError("OBS radius must be between 0 and 50 miles.")
+        return v
+
+    @field_validator("same_location_travel_minutes")
+    @classmethod
+    def _check_same_location_minutes(cls, v: int) -> int:
+        if not 0 <= v <= 60:
+            raise ValueError("Same-location travel time must be between 0 and 60 minutes.")
         return v
 
     @field_validator("on_duty_hours")
@@ -447,6 +461,15 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "obs_radius_miles": (
         "An OBS stop is only added to a load that already visits a planned stop within this "
         "many miles (straight line)."
+    ),
+    "geocode_mode": (
+        "Address = geocode every row from its street address and use the file's latitude/longitude "
+        "only when the address cannot be matched. Fill = keep the file's coordinates and geocode "
+        "only rows without them."
+    ),
+    "same_location_travel_minutes": (
+        "Minimum driving minutes between two different stops that sit on the same point "
+        "(e.g. both placed on a ZIP centroid). 0 = use the map's travel time as is."
     ),
     "pull_forward_value_minutes": (
         "A pull-forward stop is added if it costs less than this many minutes of extra driving."
