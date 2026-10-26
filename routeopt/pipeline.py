@@ -30,6 +30,12 @@ from routeopt.ingest.validator import Geocoder, ValidationResult, validate_rows
 from routeopt.logging_utils import get_logger
 from routeopt.solver.extract import extract_plan, new_run_id
 from routeopt.solver.model_builder import SolverInputs
+from routeopt.solver.obs_addon import (
+    REASON_OBS_EXCLUDED,
+    add_obs_stops,
+    is_obs_stop,
+    obs_unassigned,
+)
 from routeopt.solver.plan_validator import validate_plan
 from routeopt.solver.solve import solve
 from routeopt.solver.unassigned_reasons import attribute_reasons
@@ -120,15 +126,26 @@ def optimize(
     rlog = get_logger(__name__, run_id)
     all_stops, full_matrix = stops, matrix
     stops, matrix, out_of_scope = scope_stops(stops, matrix, settings)
-    inputs = SolverInputs(stops=stops, matrix=matrix, settings=settings, trucks=trucks)
+    # OBS-only stops are left out of the solve unless they compete normally
+    obs_stops = [s for s in stops if is_obs_stop(s)] if settings.obs_mode != "normal" else []
+    obs_ids = {s.stop_id for s in obs_stops}
+    keep = [0] + [i + 1 for i, s in enumerate(stops) if s.stop_id not in obs_ids]
+    solve_stops = [s for s in stops if s.stop_id not in obs_ids]
+    solve_matrix = matrix.submatrix(keep) if obs_ids else matrix
+    inputs = SolverInputs(stops=solve_stops, matrix=solve_matrix, settings=settings, trucks=trucks)
     t0 = time.perf_counter()
     outcome = solve(inputs)
     plan = extract_plan(outcome, inputs, run_id=run_id, matrix_source=matrix.source)
     plan.out_of_scope = out_of_scope
     if matrix.source != "osrm":
         plan.warnings.insert(0, FALLBACK_WARNING)
+    plan.unassigned, anomalies = attribute_reasons(plan, solve_stops, settings, solve_matrix)
+    if obs_stops and settings.obs_mode == "exclude":
+        plan.out_of_scope += [obs_unassigned(s, REASON_OBS_EXCLUDED) for s in obs_stops]
+        stops, matrix = solve_stops, solve_matrix
+    elif obs_stops:
+        plan = add_obs_stops(plan, stops, obs_stops, settings, matrix)
     plan.violations = validate_plan(plan, stops, settings, matrix)
-    plan.unassigned, anomalies = attribute_reasons(plan, stops, settings, matrix)
     for a in anomalies:
         plan.warnings.append(f"Priority anomaly: {a}")
     rlog.info(

@@ -22,6 +22,7 @@ PresetName = Literal["A", "B", "Custom"]
 LunchMode = Literal["smart", "simple"]
 TravelProviderChoice = Literal["auto", "osrm", "haversine"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
+ObsMode = Literal["last", "exclude", "normal"]
 
 DEFAULT_TIER_PENALTIES: dict[int, int] = {1: 100_000_000, 2: 10_000_000, 3: 1_000_000}
 DEFAULT_PULL_FORWARD_VALUE_MINUTES: dict[int, int] = {1: 240, 2: 120}
@@ -82,6 +83,8 @@ class RunSettings(BaseModel):
     travel_provider: TravelProviderChoice = "auto"
     haversine_road_factor: float = 1.3
     haversine_avg_speed_mph: float = 30.0
+    obs_mode: ObsMode = "last"
+    obs_radius_miles: float = 5.0
     pull_forward_value_minutes: dict[int, int] = Field(
         default_factory=lambda: dict(DEFAULT_PULL_FORWARD_VALUE_MINUTES)
     )
@@ -113,6 +116,13 @@ class RunSettings(BaseModel):
     def _check_max_loads(cls, v: int) -> int:
         if not 1 <= v <= 5:
             raise ValueError("Loads per truck must be between 1 and 5.")
+        return v
+
+    @field_validator("obs_radius_miles")
+    @classmethod
+    def _check_obs_radius(cls, v: float) -> float:
+        if not 0 < v <= 50:
+            raise ValueError("OBS radius must be between 0 and 50 miles.")
         return v
 
     @field_validator("on_duty_hours")
@@ -318,6 +328,15 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "(estimates only)."
     ),
     "haversine_avg_speed_mph": "Average speed assumed for straight-line estimates (estimates only).",
+    "obs_mode": (
+        "Last = plan every other stop first, then add OBS-only stops just to raise the stop "
+        "count, on loads that already pass within the OBS radius. Exclude = leave OBS-only "
+        "stops out of the run. Normal = OBS stops compete like any other stop (tier 1)."
+    ),
+    "obs_radius_miles": (
+        "An OBS stop is only added to a load that already visits a planned stop within this "
+        "many miles (straight line)."
+    ),
     "pull_forward_value_minutes": (
         "A pull-forward stop is added if it costs less than this many minutes of extra driving."
     ),

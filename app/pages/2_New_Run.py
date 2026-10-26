@@ -281,6 +281,27 @@ with st.expander("Advanced settings", expanded=False):
         disabled=preset != "Custom",
         help=TIP["span_cost_coefficient"],
     )
+    g1, g2, _g3, _g4 = st.columns(4)
+    obs_mode = g1.selectbox(
+        "OBS stops",
+        ["last", "exclude", "normal"],
+        index=["last", "exclude", "normal"].index(defaults.obs_mode),
+        format_func=lambda v: {
+            "last": "Include — add last, near planned stops",
+            "exclude": "Exclude",
+            "normal": "Plan like any other stop",
+        }[v],
+        help=TIP["obs_mode"],
+    )
+    obs_radius = g2.number_input(
+        "OBS radius (mi)",
+        0.5,
+        50.0,
+        float(defaults.obs_radius_miles),
+        0.5,
+        disabled=obs_mode != "last",
+        help=TIP["obs_radius_miles"],
+    )
 
 try:
     settings = RunSettings(
@@ -305,6 +326,8 @@ try:
         travel_provider=travel_provider,  # type: ignore[arg-type]
         haversine_road_factor=float(road_factor),
         haversine_avg_speed_mph=float(avg_speed),
+        obs_mode=obs_mode,  # type: ignore[arg-type]
+        obs_radius_miles=float(obs_radius),
         pull_forward_value_minutes={1: int(pf1), 2: int(pf2)},
         truck_fixed_cost=int(fixed_cost) if preset == "Custom" else None,
         span_cost_coefficient=int(span_cost) if preset == "Custom" else None,
