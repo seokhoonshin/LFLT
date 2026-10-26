@@ -75,6 +75,7 @@ def select_provider(
                     ),
                     base_url=app.tomtom_base_url,
                     max_cells=app.tomtom_max_cells,
+                    max_nodes=app.tomtom_max_nodes,
                     timeout_s=app.tomtom_timeout_s,
                     fallback=choice.provider,
                 )

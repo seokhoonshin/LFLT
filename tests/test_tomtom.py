@@ -119,3 +119,38 @@ def test_traffic_factor_is_not_applied_to_tomtom_times() -> None:
     m = _provider(calls).matrix(coords)
     planned = planning_matrix(m, RunSettings(plan_date=PLAN_DATE))  # CA: x 1.3 for OSRM only
     assert planned.durations_s == m.durations_s
+
+
+def test_large_matrix_and_rate_limit() -> None:
+    calls: list[dict] = []
+    coords = node_coords(make_stops(5))  # 8 points
+    m = _provider(calls, max_nodes=6).matrix(coords)
+    assert not calls and m.source == "haversine" and "TOMTOM_MAX_NODES" in m.notes[0]
+
+    hits: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hits.append(1)
+        if len(hits) == 1:
+            return httpx.Response(403, text="<h1>Developer Over Qps</h1>")
+        body = json.loads(request.content)
+        data = [
+            {
+                "originIndex": a,
+                "destinationIndex": b,
+                "routeSummary": {"lengthInMeters": 1000, "travelTimeInSeconds": 100},
+            }
+            for a in range(len(body["origins"]))
+            for b in range(len(body["destinations"]))
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    p = TomTomProvider(
+        "KEY",
+        WHEN,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        backoff_s=0,
+        min_interval_s=0,
+    )
+    m2 = p.matrix(node_coords(make_stops(1)))
+    assert m2.source.startswith("tomtom:") and len(hits) == 2  # waited and retried

@@ -95,6 +95,7 @@ class AppConfig(BaseSettings):
     tomtom_api_key: str = Field(default="", alias="TOMTOM_API_KEY")
     tomtom_base_url: str = Field(default="https://api.tomtom.com", alias="TOMTOM_BASE_URL")
     tomtom_max_cells: int = Field(default=200, alias="TOMTOM_MAX_CELLS")  # per request
+    tomtom_max_nodes: int = Field(default=60, alias="TOMTOM_MAX_NODES")  # per run
     tomtom_timeout_s: float = Field(default=60.0, alias="TOMTOM_TIMEOUT_S")
 
     @property

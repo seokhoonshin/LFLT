@@ -31,6 +31,7 @@ from routeopt.travel.haversine import HaversineProvider
 log = logging.getLogger(__name__)
 
 TOMTOM_BASE_URL = "https://api.tomtom.com"
+_RATE_LIMIT = "over q"  # TomTom answers 403 "Developer Over Qps" / "Over Queries Per ..."
 FT_TO_M = 0.3048
 LB_TO_KG = 0.45359237
 
@@ -88,6 +89,8 @@ class TomTomProvider:
         retries: int = 3,
         backoff_s: float = 1.0,
         fallback: TravelProvider | None = None,
+        max_nodes: int = 60,
+        min_interval_s: float = 0.25,
     ) -> None:
         if not api_key:
             raise TomTomError("No TomTom API key (set TOMTOM_API_KEY in .env).")
@@ -102,6 +105,9 @@ class TomTomProvider:
         self._fallback: TravelProvider = fallback or HaversineProvider()
         self.name = cache_name(depart_at, self.truck)
         self.requests_made = 0
+        self.max_nodes = max_nodes
+        self.min_interval_s = min_interval_s
+        self._last_request = 0.0
 
     @property
     def label(self) -> str:
@@ -122,12 +128,23 @@ class TomTomProvider:
         last: Exception | None = None
         for attempt in range(self.retries):
             try:
+                wait = self._last_request + self.min_interval_s - time.monotonic()
+                if wait > 0:  # stay under the per-second request limit
+                    time.sleep(wait)
+                self._last_request = time.monotonic()
                 self.requests_made += 1
                 resp = self._client.post(url, params={"key": self.api_key}, json=body)
+                text = resp.text[:200] if resp.status_code != 200 else ""
+                if resp.status_code in (401, 403) and _RATE_LIMIT in text.lower():
+                    raise httpx.HTTPStatusError(  # "Developer Over Qps / Rate": wait, retry
+                        f"TomTom rate limit ({resp.status_code}): {text}",
+                        request=resp.request,
+                        response=resp,
+                    )
                 if resp.status_code in (401, 403):
                     raise TomTomError(
-                        f"TomTom refused the key ({resp.status_code}); check TOMTOM_API_KEY "
-                        "and that Matrix Routing is enabled for it."
+                        f"TomTom refused the request ({resp.status_code}: {text.strip()}); "
+                        "check TOMTOM_API_KEY and that Matrix Routing is enabled for it."
                     )
                 if resp.status_code == 429 or resp.status_code >= 500:
                     raise httpx.HTTPStatusError(
@@ -175,6 +192,14 @@ class TomTomProvider:
     # ---- matrix ---------------------------------------------------------------------
     def matrix(self, coords: list[Coord]) -> Matrix:
         n = len(coords)
+        if n > self.max_nodes:  # n x n cells would spend the free allowance in one run
+            fb = self._fallback.matrix(coords)
+            fb.notes.insert(
+                0,
+                f"TomTom not used: {n} points ({n * n:,} cells) is more than TOMTOM_MAX_NODES "
+                f"({self.max_nodes}); used {fb.source} travel times.",
+            )
+            return fb
         side = max(1, math.isqrt(self.max_cells))
         ranges = [list(range(s, min(s + side, n))) for s in range(0, n, side)]
         cells: dict[tuple[int, int], tuple[int, int]] = {}
