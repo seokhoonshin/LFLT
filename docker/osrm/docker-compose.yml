@@ -1,0 +1,33 @@
+# OSRM routing server for RouteOpt: the road network within 250 miles of the Rialto, CA
+# hub (coverage.geojson - southern/central California, southern Nevada, western Arizona;
+# northern Baja California optional), car profile, MLD algorithm.
+#
+# First run:  ./setup.sh   (Linux/macOS)   or   .\setup.ps1   (Windows PowerShell)
+# Then:       docker compose up -d
+# Health:     curl "http://localhost:5000/nearest/v1/driving/-117.4319,34.1511"
+#
+# The setup script downloads the Geofabrik extracts into ./data, clips them to the
+# coverage circle (osmium) and runs osrm-extract / osrm-partition / osrm-customize.  The
+# resulting routeopt-coverage.osrm* files are what osrm-routed serves below.  See
+# README.md in this folder for disk/RAM, radius changes and refresh notes.
+
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    container_name: routeopt-osrm
+    # Add --mmap after "mld" to page the dataset from disk instead of loading it into RAM
+    # (slower queries, much smaller memory footprint).
+    command: >
+      osrm-routed --algorithm mld --max-table-size 2000 --port 5000
+      /data/routeopt-coverage.osrm
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://localhost:5000/nearest/v1/driving/-117.4319,34.1511' | grep -q Ok || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s

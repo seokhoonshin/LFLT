@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+data/routeopt.db
+data/uploads/
+data/exports/
+docker/osrm/data/
+.env
+*.egg-info/
+build/
+dist/

@@ -1,0 +1,85 @@
+[project]
+name = "routeopt"
+version = "0.1.0"
+description = "RouteOpt - same-day white-glove delivery route optimizer (OR-Tools + OSRM + Streamlit)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "ortools>=9.15,<10",
+    "streamlit>=1.63,<2",
+    "streamlit-folium>=0.27,<1",
+    "folium>=0.20,<1",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.19,<2",
+    "pydantic>=2.13,<3",
+    "pydantic-settings>=2.15,<3",
+    "openpyxl>=3.1,<4",
+    "reportlab>=4.4,<6",
+    "httpx>=0.28,<1",
+    "pandas>=2.2,<4",
+    "numpy>=2.0,<3",
+    "python-dateutil>=2.9,<3",
+    "tzdata>=2024.1",  # IANA zone database for HUB_TIMEZONE (not bundled on Windows)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "pytest-cov>=7,<8",
+    "ruff>=0.16,<1",
+    "mypy>=2.3,<3",
+    "pandas-stubs",
+    "types-python-dateutil",
+]
+
+[project.scripts]
+routeopt = "routeopt.cli:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["routeopt*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["routeopt", "app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+ignore = ["RUF012", "B008", "SIM108", "RUF001", "RUF002", "RUF003", "N999"]
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 120  # the formatter wraps code at 100; long message strings may run to 120
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"app/*" = ["E501", "E402", "E741"]
+"data/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["routeopt"]
+strict = false
+warn_unused_ignores = false
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+warn_return_any = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["routeopt"]
+omit = ["routeopt/db/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
