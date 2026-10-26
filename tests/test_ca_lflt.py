@@ -179,17 +179,20 @@ def test_ca_upload_columns() -> None:
         _raw(3, origin_dc="lgc7", priority=2),
         _raw(4, origin_dc="LGC9"),
         _raw(5, pallet_required="maybe"),
-        _raw(6, volume_cuft=400, pallet_required="Y"),
+        _raw(6, volume_cuft=400, pallet_required="ES"),
+        _raw(7, origin_dc="LGC2", pallet_required="HA", volume_cuft=600, address="7 Ha St"),
+        _raw(8, origin_dc="LGC2", pallet_required="ac", volume_cuft=300, address="8 Ac St"),
     ]
     res = validate_rows(rows, PLAN_DATE, s)
     by_row = {e.row: e.message for e in res.errors}
     assert set(by_row) == {4, 5, 6}
-    assert "Unknown DC" in by_row[4] and "Y or N" in by_row[5] and "less than 400" in by_row[6]
-    a, b = res.shipments
+    assert "Unknown DC" in by_row[4] and "Y / N" in by_row[5] and "less than 400" in by_row[6]
+    a, b, ha, ac = res.shipments
+    assert not ha.pallet_required and ac.pallet_required  # HA: no pallet; others: pallet
     assert (a.site, a.pallet_required, a.priority) == ("FONTANA", True, 1)
     assert (b.site, b.origin_dc, b.priority) == ("RIALTO", "LGC7", 2)
     assert a.shipment_type.value == "LMD" and a.weight_lb == 0 and a.pieces == 1
-    stops = consolidate(res.shipments, s).stops
+    stops = consolidate([a, b], s).stops
     by_site = {x.site: x for x in stops}
     assert by_site["FONTANA"].tier == 1 and by_site["FONTANA"].pallet
     assert by_site["FONTANA"].contact == "Ana 714-555-0101"

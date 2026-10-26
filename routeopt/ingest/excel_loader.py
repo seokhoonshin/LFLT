@@ -106,7 +106,16 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "first shpg loc cd",
         "warehouse",
     ],
-    "pallet_required": ["pallet", "pallet required", "pallet yn", "needs pallet", "pallet flag"],
+    "pallet_required": [
+        "pallet",
+        "pallet required",
+        "pallet yn",
+        "needs pallet",
+        "pallet flag",
+        "hq",
+        "product group",
+        "prod group",
+    ],
     "priority": ["prio", "priority group"],
     "memo": ["memo text", "memo txt", "internal memo"],
 }

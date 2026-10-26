@@ -30,6 +30,8 @@ from routeopt.ingest.excel_loader import RawRow, excel_serial_to_date
 Severity = Literal["error", "warning"]
 
 _SUFFIX_RE = re.compile(r"_(LMD|RTN|INC)\s*$", re.IGNORECASE)
+_PRODUCT_GROUP_RE = re.compile(r"[A-Z]{2,4}")
+NO_PALLET_GROUP = "HA"  # CA LFLT: HA ships without a pallet; AC, ES, BS, MS, ... need one
 _WS_RE = re.compile(r"\s+")
 
 
@@ -351,10 +353,20 @@ def validate_rows(
         pallet_text = parse_str(raw.get("pallet_required"))
         if pallet_text is not None:
             flag = pallet_text.strip().upper()
-            if flag in ("Y", "YES", "TRUE", "1", "HA"):
+            if flag in ("Y", "YES", "TRUE", "1"):
                 pallet = True
-            elif flag not in ("N", "NO", "FALSE", "0"):
-                err(f"Pallet required '{pallet_text}' must be Y or N.", "pallet_required")
+            elif flag in ("N", "NO", "FALSE", "0"):
+                pallet = False
+            elif _PRODUCT_GROUP_RE.fullmatch(flag):
+                # a product group code: HA ships without a pallet, every other group
+                # (AC, ES, BS, MS, ...) needs one
+                pallet = flag != NO_PALLET_GROUP
+            else:
+                err(
+                    f"Pallet required '{pallet_text}' must be Y / N or a product group "
+                    "(HA = no pallet, others = pallet).",
+                    "pallet_required",
+                )
         priority: int | None = None
         try:
             priority = parse_int(raw.get("priority"))

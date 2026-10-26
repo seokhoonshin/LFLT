@@ -9,8 +9,8 @@
    - LGC7: 5550 Mango Ave, Rialto, CA 92377
 3. LGC2 and LGC7 share one address and are treated as a single site
 4. Truck capacity: less than 800 cu ft
-5. Shipments that require a pallet: less than 400 cu ft
-6. Shipments that do not require a pallet: less than 800 cu ft
+5. Shipments that require a pallet (every product group except HA: AC, ES, BS, MS, ...): less than 400 cu ft
+6. Shipments that do not require a pallet (HA): less than 800 cu ft
 7. The same limits apply when pallet and non-pallet shipments ship together
 
 ## Time

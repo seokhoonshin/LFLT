@@ -12,7 +12,8 @@ chosen on New Run (`--profile legacy` on the CLI).  It plans two trucks out of L
 (5550 Mango Ave, Rialto) and LGC8 (5267 Sierra Ave, Fontana) under the rules in
 [`docs/CA_LFLT_RouteOpt_Conditions_EN.md`](docs/CA_LFLT_RouteOpt_Conditions_EN.md)
 ([Korean](docs/CA_LFLT_RouteOpt_Conditions_KR.md)): 06:00 start with 60 min loading,
-first appointment 08:00, less than 800 cu ft per load (less than 400 with a pallet),
+first appointment 08:00, less than 800 cu ft per load (less than 400 when any shipment
+needs a pallet: every product group except HA),
 20 min per stop + 0.1 min per cu ft, less than 200 mi one way (150-200 mi flagged for a
 carrier check), two turns with less than 300 mi in total and at least 3 h between the
 first turn's last delivery and the second turn's departure, lunch 30 min between 11:00
@@ -153,7 +154,7 @@ CA LFLT uploads may also carry (and need none of `model_code`, `weight_lb`, `pie
 | Column | Notes |
 |---|---|
 | `origin_dc` | `LGC2`, `LGC7` or `LGC8` (aliases: `DC`, `FRST_SHPG_LOC_CD`, …); blank = LGC2/LGC7 |
-| `pallet_required` | `Y` / `N` (`HA` also counts as Y); a load with any pallet shipment stays below 400 cu ft |
+| `pallet_required` | `Y` / `N`, or the product group (aliases `HQ`, `product group`): `HA` = no pallet, every other group (`AC`, `ES`, `BS`, `MS`, …) = pallet; a load with any pallet shipment stays below 400 cu ft |
 | `priority` | `1` existing LFLT, `2` add-on candidate, `3` low priority (the stop's tier) |
 | `Memo Text` | merged into notes; a phone / e-mail in it becomes the stop's appointment contact |
 

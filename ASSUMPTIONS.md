@@ -20,7 +20,9 @@ as legacy.
   site's vehicles (`VehicleVar.RemoveValues`).  Unused depot nodes are forced inactive.
 - **Volume.** "Less than" limits: 799.9 / 399.9 cu ft in the solver.  A *pallet trip* is a
   load with any pallet shipment; pallet stops only ride on pallet-trip vehicles, other
-  stops may join them (rule 7: mixed loads take the pallet limit).
+  stops may join them (rule 7: mixed loads take the pallet limit).  `pallet_required`
+  takes Y / N or the product group: HA ships without a pallet (< 800), every other
+  group (AC, ES, BS, MS, ...) needs one (< 400).
 - **Time.** Shift 06:00; turn 1 departs after `first_load_minutes` (60).  Stops are not
   served before 08:00 (the truck waits; the wait counts on duty).  Stop time = 20 min +
   round(cu ft x 0.1) per stop; the upload's `service_minutes` is ignored.
