@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from routeopt.config import AppConfig, RunSettings
-from routeopt.domain import HUB_LAT, HUB_LON, Stop
+from routeopt.domain import SITES, Stop
 from routeopt.travel.base import Coord, Matrix, TravelProvider
 from routeopt.travel.cache import CachedProvider, TravelCache
 from routeopt.travel.haversine import HaversineProvider
@@ -61,8 +61,9 @@ def select_provider(
 
 
 def node_coords(stops: list[Stop]) -> list[Coord]:
-    """Node 0 = hub, nodes 1..S = stops (solver order)."""
-    return [(HUB_LAT, HUB_LON)] + [(s.latitude, s.longitude) for s in stops]
+    """Nodes 0..N_DEPOTS-1 = loading sites (every site, used or not, so node numbers never
+    shift), then the stops in solver order."""
+    return [(site.lat, site.lon) for site in SITES] + [(s.latitude, s.longitude) for s in stops]
 
 
 __all__ = [

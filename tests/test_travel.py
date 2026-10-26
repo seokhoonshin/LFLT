@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 from routeopt.config import AppConfig
-from routeopt.domain import HUB_LAT, HUB_LON
+from routeopt.domain import HUB_LAT, HUB_LON, N_DEPOTS
 from routeopt.travel import node_coords, select_provider
 from routeopt.travel.base import coords_hash
 from routeopt.travel.cache import CachedProvider, TravelCache
@@ -115,8 +115,8 @@ def test_osrm_matrix_single_request_and_health() -> None:
     assert p.healthy()
     coords = node_coords(make_stops(5))
     m = p.matrix(coords)
-    assert m.source == "osrm" and m.n == 6
-    assert all(m.durations_s[i][i] == 0 for i in range(6))
+    assert m.source == "osrm" and m.n == N_DEPOTS + 5
+    assert all(m.durations_s[i][i] == 0 for i in range(m.n))
     assert m.durations_s[0][1] > 0 and m.distances_m[0][1] > 0
     table_calls = [c for c in calls if c.url.path.startswith("/table/")]
     assert len(table_calls) == 1
@@ -171,11 +171,12 @@ def test_travel_cache_is_order_independent() -> None:
     cache.put(m)
     hit = cache.get("haversine", coords)
     assert hit is not None and hit.durations_s == m.durations_s and hit.coords == m.coords
-    permuted = [coords[i] for i in (3, 0, 4, 1, 2)]
+    order = (3, 0, 5, 4, 1, 2)
+    permuted = [coords[i] for i in order]
     hit2 = cache.get("haversine", permuted)
     assert hit2 is not None
-    for a, i in enumerate((3, 0, 4, 1, 2)):
-        for b, j in enumerate((3, 0, 4, 1, 2)):
+    for a, i in enumerate(order):
+        for b, j in enumerate(order):
             assert hit2.durations_s[a][b] == m.durations_s[i][j]
     assert cache.get("osrm", coords) is None  # keyed by provider too
     assert coords_hash(coords) == coords_hash(permuted)

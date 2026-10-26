@@ -16,6 +16,9 @@ from dataclasses import dataclass, field
 
 from routeopt.config import RunSettings
 from routeopt.domain import (
+    DEFAULT_SITE,
+    N_DEPOTS,
+    SITE_NODE,
     Load,
     LunchInfo,
     PlanTruck,
@@ -28,6 +31,50 @@ from routeopt.travel.base import Matrix
 
 HUB_NODE = 0
 NOON_S = 12 * 3600
+
+
+def site_node(site: str) -> int:
+    """Matrix node of a loading site (depot nodes come first, see ``node_coords``)."""
+    return SITE_NODE.get(site, HUB_NODE)
+
+
+def load_site(stop_ids: list[str], stops_by_id: dict[str, Stop]) -> str:
+    """A load leaves from the site of its stops (the validator flags mixed loads)."""
+    return stops_by_id[stop_ids[0]].site if stop_ids else DEFAULT_SITE
+
+
+def turn_departure(
+    t: int,
+    load_idx: int,
+    prev_site: str | None,
+    site: str,
+    last_delivery: int | None,
+    matrix: Matrix,
+    settings: RunSettings,
+) -> tuple[int, int | None, int]:
+    """(departure, reload start, deadhead seconds) of load ``load_idx`` given ``t``, the time
+    the truck is back at ``prev_site`` (or the shift start for the first load).
+
+    Load 1 leaves after the first-load loading time.  A later load first drives DC-to-DC
+    when it loads at another site, then reloads, and never leaves before the previous
+    turn's last delivery + the turn gap.
+    """
+    if load_idx == 1:
+        return t + settings.first_load_seconds, None, 0
+    deadhead = 0
+    if prev_site is not None and prev_site != site:
+        deadhead = matrix.duration(site_node(prev_site), site_node(site))
+    reload_start = t + deadhead
+    depart = reload_start + settings.reload_seconds
+    if last_delivery is not None and settings.turn_gap_seconds:
+        depart = max(depart, last_delivery + settings.turn_gap_seconds)
+    return depart, reload_start, deadhead
+
+
+def wait_for_appointment(arrive: int, settings: RunSettings) -> int:
+    """A truck that arrives before the first appointment time waits."""
+    rel = settings.earliest_delivery_rel_s
+    return max(arrive, settings.shift_start_s + rel) if rel else arrive
 
 
 @dataclass
@@ -43,8 +90,8 @@ class RouteSkeleton:
 
 
 def node_index_map(stops: list[Stop]) -> dict[str, int]:
-    """stop_id -> matrix node (hub is node 0, stops are 1..S in list order)."""
-    return {s.stop_id: i + 1 for i, s in enumerate(stops)}
+    """stop_id -> matrix node (sites are nodes 0..N_DEPOTS-1, then stops in list order)."""
+    return {s.stop_id: i + N_DEPOTS for i, s in enumerate(stops)}
 
 
 def lunch_via_reload(settings: RunSettings) -> bool:
@@ -129,9 +176,7 @@ def build_truck(
 
     # First pass without an explicit lunch to know departure times (for rule placement).
     if lunch.kind == "break" and (lunch.load_seq is None or lunch.after_stop_seq is None):
-        departs, travels = _departures_without_lunch(
-            loads, stops_by_id, matrix, node_of, settings
-        )
+        departs, travels = _departures_without_lunch(loads, stops_by_id, matrix, node_of, settings)
         load_seq, after_stop_seq, start = choose_lunch_arc(loads, departs, settings, travels)
         lunch = LunchInfo(
             kind="break", load_seq=load_seq, after_stop_seq=after_stop_seq, start_s=start
@@ -143,14 +188,20 @@ def build_truck(
     lunch_start_actual: int | None = None
     lunch_end_actual: int | None = None
     lunch_where = ""
+    prev_site: str | None = None
+    last_delivery: int | None = None
     for load_idx, stop_ids in enumerate(loads, start=1):
         stops = [stops_by_id[sid] for sid in stop_ids]
+        site = load_site(stop_ids, stops_by_id)
+        depot = site_node(site)
         load_out_vol = sum(s.delivery_volume for s in stops)
         load_out_wt = sum(s.delivery_weight for s in stops)
         load_out_pcs = sum(s.pieces_in for s in stops)
-        reload_start: int | None = None
+        depart, reload_start, deadhead = turn_departure(
+            t, load_idx, prev_site, site, last_delivery, matrix, settings
+        )
         if load_idx >= 2:
-            reload_start = t
+            t = reload_start if reload_start is not None else t
             if (
                 lunch.kind == "reload"
                 and lunch.load_seq in (None, load_idx)
@@ -165,11 +216,10 @@ def build_truck(
                 lunch_end_actual = lunch_start_actual + lunch_s
                 lunch_where = f"during the reload before load {load_idx}"
                 lunch = lunch.model_copy(update={"load_seq": load_idx})
-            t += settings.reload_seconds
-        depart = t
+        t = depart
         vol, wt, pcs = load_out_vol, load_out_wt, load_out_pcs
         max_vol = vol
-        prev_node = HUB_NODE
+        prev_node = depot
         drive_s = 0
         dist_m = 0
         visits: list[StopVisit] = []
@@ -194,6 +244,7 @@ def build_truck(
                     if k == 1
                     else f"after stop {k - 1} of load {load_idx}"
                 )
+            arrive = wait_for_appointment(arrive, settings)
             depart_stop = arrive + stop.service_total_minutes * 60
             vol_arr, wt_arr, pcs_arr = vol, wt, pcs
             vol = vol - stop.delivery_volume + stop.pickup_volume
@@ -228,9 +279,11 @@ def build_truck(
             dist_m += dist
             t = depart_stop
             prev_node = node
-        # back to the hub
-        travel = matrix.duration(prev_node, HUB_NODE)
-        dist = matrix.distance(prev_node, HUB_NODE)
+        last_delivery = t
+        one_way_m = dist_m
+        # back to the load's site
+        travel = matrix.duration(prev_node, depot)
+        dist = matrix.distance(prev_node, depot)
         lunch_here = (
             lunch.kind == "break"
             and lunch.load_seq == load_idx
@@ -264,9 +317,15 @@ def build_truck(
                 lunch_on_return=lunch_on_return,
                 stops=visits,
                 solver_return_s=solver_return,
+                site=site,
+                pallet=any(s.pallet for s in stops),
+                deadhead_minutes=round(deadhead / 60, 1),
+                one_way_miles=round(one_way_m / 1609.344, 1),
+                last_delivery_s=last_delivery,
             )
         )
         t = arrive_hub
+        prev_site = site
 
     lunch_info = LunchInfo(
         kind=lunch.kind,
@@ -301,23 +360,31 @@ def _departures_without_lunch(
     departs_out: list[list[int]] = []
     travels_out: list[list[int]] = []
     t = settings.shift_start_s
+    prev_site: str | None = None
+    last_delivery: int | None = None
     for load_idx, stop_ids in enumerate(loads, start=1):
-        if load_idx >= 2:
-            t += settings.reload_seconds
+        site = load_site(stop_ids, stops_by_id)
+        depot = site_node(site)
+        t, _reload_start, _deadhead = turn_departure(
+            t, load_idx, prev_site, site, last_delivery, matrix, settings
+        )
         departs = [t]
         travels: list[int] = []
-        prev = HUB_NODE
+        prev = depot
         for sid in stop_ids:
             node = node_of[sid]
             travel = matrix.duration(prev, node)
             travels.append(travel)
-            t += travel + stops_by_id[sid].service_total_minutes * 60
+            t = wait_for_appointment(t + travel, settings)
+            t += stops_by_id[sid].service_total_minutes * 60
             departs.append(t)
             prev = node
-        travels.append(matrix.duration(prev, HUB_NODE))
-        t += matrix.duration(prev, HUB_NODE)
+        last_delivery = t
+        travels.append(matrix.duration(prev, depot))
+        t += matrix.duration(prev, depot)
         departs_out.append(departs)
         travels_out.append(travels)
+        prev_site = site
     return departs_out, travels_out
 
 

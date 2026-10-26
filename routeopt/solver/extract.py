@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from routeopt.config import RunSettings
-from routeopt.domain import LunchInfo, Plan, PlanTruck, Stop, UnassignedStop, hub_now
+from routeopt.domain import N_DEPOTS, LunchInfo, Plan, PlanTruck, Stop, UnassignedStop, hub_now
 from routeopt.solver.kpis import compute_kpis
 from routeopt.solver.model_builder import SolverInputs
 from routeopt.solver.solve import RawRoute, SolveOutcome
@@ -37,7 +37,10 @@ def _locate_break(
     for load_seq, route in enumerate(loads, start=1):
         if route.vehicle != break_vehicle:
             continue
-        departs = [route.start_cumul + (settings.reload_seconds if route.slot > 1 else 0)]
+        departs = [
+            route.start_cumul
+            + (settings.reload_seconds if route.slot > 1 else settings.first_load_seconds)
+        ]
         for node, arrive in zip(route.nodes, route.arrivals, strict=True):
             departs.append(arrive + service_s[node])
         after = 0
@@ -60,7 +63,7 @@ def extract_plan(
     stops_by_id = {s.stop_id: s for s in stops}
     node_of = node_index_map(stops)
     shift = settings.shift_start_s
-    service_s = [0] + [s.service_total_minutes * 60 for s in stops]
+    service_s = [0] * N_DEPOTS + [s.service_total_minutes * 60 for s in stops]
 
     routes_by_truck: dict[int, list[RawRoute]] = {}
     for r in outcome.routes:
@@ -73,7 +76,7 @@ def extract_plan(
         if not routes:
             trucks.append(PlanTruck(number=truck.truck_number, driver_name=truck.driver_name))
             continue
-        loads = [[stops[n - 1].stop_id for n in r.nodes] for r in routes]
+        loads = [[stops[n - N_DEPOTS].stop_id for n in r.nodes] for r in routes]
         # smart mode: lunch is a time budget in the model; the timeline engine places it
         # (lunch=None).  simple mode: the solver placed an explicit break interval.
         lunch: LunchInfo | None = None
@@ -95,7 +98,7 @@ def extract_plan(
             loads=loads,
             lunch=lunch,
             solver_arrivals={
-                stops[n - 1].stop_id: shift + a
+                stops[n - N_DEPOTS].stop_id: shift + a
                 for r in routes
                 for n, a in zip(r.nodes, r.arrivals, strict=True)
             },
@@ -103,7 +106,7 @@ def extract_plan(
         )
         trucks.append(build_truck(skeleton, stops_by_id, inputs.matrix, node_of, settings))
 
-    unassigned = [_unassigned(stops[n - 1]) for n in sorted(outcome.dropped_nodes)]
+    unassigned = [_unassigned(stops[n - N_DEPOTS]) for n in sorted(outcome.dropped_nodes)]
     plan = Plan(
         run_id=run_id or new_run_id(),
         plan_version=0,

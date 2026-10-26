@@ -59,7 +59,7 @@ def stop_tier(day_tag: DayTag, order_types: list[OrderType]) -> int:
 _PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _NAME_RE = re.compile(
-    r"(?:call|contact|ask for|attn:?)\s+([A-Z][a-zA-Z'-]+(?:\s[A-Z][a-zA-Z'-]+)?)"
+    r"(?i:call|contact|ask for|attn:?)\s+([A-Z][a-zA-Z'-]+(?:\s[A-Z][a-zA-Z'-]+)?)"
 )
 LOOK_UP_CONTACT = "Look up the official contact by address"
 

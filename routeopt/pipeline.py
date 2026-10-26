@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from routeopt.config import AppConfig, RunSettings
-from routeopt.domain import Plan, Stop, TruckConfig, UnassignedStop
+from routeopt.domain import N_DEPOTS, Plan, Stop, TruckConfig, UnassignedStop
 from routeopt.ingest.consolidate import ConsolidationResult, consolidate
 from routeopt.ingest.excel_loader import load_rows
 from routeopt.ingest.validator import Geocoder, ValidationResult, validate_rows
@@ -68,12 +68,12 @@ def scope_stops(
 ) -> tuple[list[Stop], Matrix, list[UnassignedStop]]:
     """Keep D stops plus the enabled pull-forward days; restrict the matrix to match."""
     enabled = set(settings.pull_forward_days)
-    keep: list[int] = [0]
+    keep: list[int] = list(range(N_DEPOTS))
     kept: list[Stop] = []
     excluded: list[UnassignedStop] = []
     for i, s in enumerate(stops):
         if s.day_tag.offset == 0 or s.day_tag.offset in enabled:
-            keep.append(i + 1)
+            keep.append(i + N_DEPOTS)
             kept.append(s)
         else:
             excluded.append(
@@ -129,7 +129,9 @@ def optimize(
     # OBS-only stops are left out of the solve unless they compete normally
     obs_stops = [s for s in stops if is_obs_stop(s)] if settings.obs_mode != "normal" else []
     obs_ids = {s.stop_id for s in obs_stops}
-    keep = [0] + [i + 1 for i, s in enumerate(stops) if s.stop_id not in obs_ids]
+    keep = list(range(N_DEPOTS)) + [
+        i + N_DEPOTS for i, s in enumerate(stops) if s.stop_id not in obs_ids
+    ]
     solve_stops = [s for s in stops if s.stop_id not in obs_ids]
     solve_matrix = matrix.submatrix(keep) if obs_ids else matrix
     inputs = SolverInputs(stops=solve_stops, matrix=solve_matrix, settings=settings, trucks=trucks)
@@ -338,7 +340,10 @@ class OptimizeJob:
                 try:
                     status, payload = self._conn.recv()
                 except (EOFError, OSError):
-                    status, payload = "error", "The optimizer process stopped before returning a plan."
+                    status, payload = (
+                        "error",
+                        "The optimizer process stopped before returning a plan.",
+                    )
                 if status == "ok":
                     self.result = payload
                 else:
