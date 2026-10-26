@@ -81,7 +81,9 @@ st.caption(f"File: **{st.session_state['upload_name']}**")
 # ---------------------------------------------------------------------------------------
 st.subheader("2 · Settings")
 defaults: RunSettings = (
-    st.session_state.get("settings_defaults") or repo.load_last_settings() or RunSettings()
+    st.session_state.get("settings_defaults")
+    or repo.load_last_settings()
+    or RunSettings(travel_provider="tomtom" if cfg.tomtom_api_key else "auto")
 )
 if "settings_defaults" not in st.session_state:
     st.session_state["settings_defaults"] = defaults
@@ -96,10 +98,50 @@ profile = st.radio(
     help=TIP["profile"],
     horizontal=True,
 )
+
+
+def profile_defaults(name: str) -> RunSettings:
+    """A rule set's own defaults (TomTom travel times when a key is configured)."""
+    return RunSettings(
+        profile=name,  # type: ignore[arg-type]
+        travel_provider="tomtom" if cfg.tomtom_api_key else "auto",
+    )
+
+
 if profile != defaults.profile:  # switch every default to the other rule set
-    st.session_state["settings_defaults"] = RunSettings(profile=profile)  # type: ignore[arg-type]
+    st.session_state["settings_defaults"] = profile_defaults(profile)
     st.session_state.pop("ingest_cache", None)
     st.rerun()
+
+# New Run starts from the last run's settings; say where they differ from the rule set
+KEY_SETTINGS = {
+    "shift_start": "Shift start",
+    "preset": "Preset",
+    "travel_provider": "Travel times",
+    "truck_volume_cuft": "Truck volume",
+    "max_loads_per_truck": "Max loads",
+    "first_load_minutes": "First loading",
+    "earliest_delivery": "First appointment",
+    "traffic_factor": "Traffic factor",
+    "obs_mode": "OBS stops",
+}
+reference = profile_defaults(profile)
+changed = [
+    f"{label} {getattr(defaults, key)} (default {getattr(reference, key)})"
+    for key, label in KEY_SETTINGS.items()
+    if getattr(defaults, key) != getattr(reference, key)
+]
+if changed:
+    note, reset = st.columns([5, 1])
+    note.info(
+        "Starting from your last run's settings, which differ from the defaults: "
+        + "; ".join(changed)
+        + "."
+    )
+    if reset.button("Reset to defaults", help="Use the rule set's defaults for every setting."):
+        st.session_state["settings_defaults"] = reference
+        st.session_state.pop("ingest_cache", None)
+        st.rerun()
 
 top1, top2, top3 = st.columns([1.2, 1, 1])
 preset = top1.radio(
