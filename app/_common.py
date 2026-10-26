@@ -155,6 +155,7 @@ def load_table(
                 "Depart": clock(v.depart_s),
                 "Volume after": v.volume_after,
                 "Lunch before": "🍽️" if v.lunch_before else "",
+                "Appointment contact": s.contact if s else "",
                 "Stop": v.stop_id,
             }
         )

@@ -88,6 +88,19 @@ if "settings_defaults" not in st.session_state:
 trucks_all = repo.list_trucks()
 active_numbers = [t.truck_number for t in trucks_all if t.active]
 
+profile = st.radio(
+    "Rules",
+    ["ca_lflt", "legacy"],
+    index=["ca_lflt", "legacy"].index(defaults.profile),
+    format_func=lambda p: {"ca_lflt": "CA LFLT", "legacy": "Legacy (single hub)"}[p],
+    help=TIP["profile"],
+    horizontal=True,
+)
+if profile != defaults.profile:  # switch every default to the other rule set
+    st.session_state["settings_defaults"] = RunSettings(profile=profile)  # type: ignore[arg-type]
+    st.session_state.pop("ingest_cache", None)
+    st.rerun()
+
 top1, top2, top3 = st.columns([1.2, 1, 1])
 preset = top1.radio(
     "Preset",
@@ -281,6 +294,74 @@ with st.expander("Advanced settings", expanded=False):
         disabled=preset != "Custom",
         help=TIP["span_cost_coefficient"],
     )
+    st.markdown("**CA LFLT rules** (0 = off)")
+    h1, h2, h3, h4 = st.columns(4)
+    first_load = h1.number_input(
+        "First loading (min)",
+        0,
+        240,
+        int(defaults.first_load_minutes),
+        help=TIP["first_load_minutes"],
+    )
+    use_first_appt = h2.checkbox(
+        "First appointment time",
+        value=defaults.earliest_delivery is not None,
+        help=TIP["earliest_delivery"],
+    )
+    earliest_delivery = h2.time_input(
+        "First appointment",
+        value=defaults.earliest_delivery or dt.time(8, 0),
+        disabled=not use_first_appt,
+        label_visibility="collapsed",
+    )
+    pallet_volume = h3.number_input(
+        "Pallet load volume (cu ft)",
+        0.0,
+        5000.0,
+        float(defaults.pallet_volume_cuft or 0.0),
+        10.0,
+        help=TIP["pallet_volume_cuft"],
+    )
+    unload_rate = h4.number_input(
+        "Unloading (min per cu ft)",
+        0.0,
+        5.0,
+        float(defaults.unload_minutes_per_cuft or 0.0),
+        0.05,
+        help=TIP["unload_minutes_per_cuft"],
+    )
+    i1, i2, i3, i4 = st.columns(4)
+    one_way = i1.number_input(
+        "One-way limit (mi)",
+        0.0,
+        1000.0,
+        float(defaults.max_one_way_miles or 0.0),
+        10.0,
+        help=TIP["max_one_way_miles"],
+    )
+    carrier_check = i2.number_input(
+        "Carrier check above (mi)",
+        0.0,
+        1000.0,
+        float(defaults.carrier_check_miles or 0.0),
+        10.0,
+        help=TIP["carrier_check_miles"],
+    )
+    two_turn_miles = i3.number_input(
+        "Two-turn total (mi)",
+        0.0,
+        2000.0,
+        float(defaults.two_turn_max_miles or 0.0),
+        10.0,
+        help=TIP["two_turn_max_miles"],
+    )
+    turn_gap = i4.number_input(
+        "Turn gap after last delivery (min)",
+        0,
+        600,
+        int(defaults.turn_gap_minutes),
+        help=TIP["turn_gap_minutes"],
+    )
     g1, g2, _g3, _g4 = st.columns(4)
     obs_mode = g1.selectbox(
         "OBS stops",
@@ -305,6 +386,7 @@ with st.expander("Advanced settings", expanded=False):
 
 try:
     settings = RunSettings(
+        profile=profile,  # type: ignore[arg-type]
         plan_date=plan_date,
         pull_forward_days=[int(d) for d in pull_forward],
         trucks_selected=list(trucks_selected),
@@ -326,6 +408,14 @@ try:
         travel_provider=travel_provider,  # type: ignore[arg-type]
         haversine_road_factor=float(road_factor),
         haversine_avg_speed_mph=float(avg_speed),
+        first_load_minutes=int(first_load),
+        earliest_delivery=earliest_delivery if use_first_appt else None,
+        pallet_volume_cuft=float(pallet_volume) or None,
+        unload_minutes_per_cuft=float(unload_rate) or None,
+        max_one_way_miles=float(one_way) or None,
+        carrier_check_miles=float(carrier_check) or None,
+        two_turn_max_miles=float(two_turn_miles) or None,
+        turn_gap_minutes=int(turn_gap),
         obs_mode=obs_mode,  # type: ignore[arg-type]
         obs_radius_miles=float(obs_radius),
         pull_forward_value_minutes={1: int(pf1), 2: int(pf2)},
@@ -354,6 +444,9 @@ ingest_key = (
     settings.stop_buffer_minutes,
     settings.coverage_radius_miles,
     settings.truck_volume_cuft,
+    settings.profile,
+    settings.pallet_volume_cuft,
+    settings.unload_minutes_per_cuft,
 )
 cache = st.session_state.get("ingest_cache")
 if cache is None or cache[0] != ingest_key:

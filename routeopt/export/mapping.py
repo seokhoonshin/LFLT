@@ -8,7 +8,16 @@ import folium
 from folium.plugins import Fullscreen
 
 from routeopt.config import RunSettings
-from routeopt.domain import HUB_ADDRESS, HUB_LAT, HUB_LON, Plan, Stop, clock
+from routeopt.domain import (
+    DEFAULT_SITE,
+    HUB_LAT,
+    HUB_LON,
+    SITE_BY_CODE,
+    SITES,
+    Plan,
+    Stop,
+    clock,
+)
 
 Coord = tuple[float, float]
 GeometryFn = Callable[[list[Coord]], list[Coord] | None]
@@ -74,12 +83,19 @@ def build_map(
     )
     Fullscreen().add_to(m)
     points: list[Coord] = [(HUB_LAT, HUB_LON)]
-    folium.Marker(
-        [HUB_LAT, HUB_LON],
-        popup=f"<b>Hub</b><br/>{HUB_ADDRESS}",
-        tooltip="Hub",
-        icon=folium.Icon(color="black", icon="home", prefix="fa"),
-    ).add_to(m)
+    used_sites = {load.site for t in plan.trucks for load in t.loads if load.stops} or {
+        DEFAULT_SITE
+    }
+    for site in SITES:
+        if site.code not in used_sites:
+            continue
+        folium.Marker(
+            [site.lat, site.lon],
+            popup=f"<b>{site.name}</b><br/>{site.address}",
+            tooltip=f"Hub · {site.name}",
+            icon=folium.Icon(color="black", icon="home", prefix="fa"),
+        ).add_to(m)
+        points.append((site.lat, site.lon))
 
     for truck in plan.trucks:
         loads = [load for load in truck.loads if load.stops]
@@ -90,7 +106,8 @@ def build_map(
             name=f"{truck.number} – {truck.driver_name or 'no driver'}", show=True
         )
         for load in loads:
-            coords: list[Coord] = [(HUB_LAT, HUB_LON)]
+            depot = SITE_BY_CODE[load.site]
+            coords: list[Coord] = [(depot.lat, depot.lon)]
             for visit in load.stops:
                 stop = by_id.get(visit.stop_id)
                 if stop is None:
@@ -109,7 +126,7 @@ def build_map(
                     popup=folium.Popup(_popup(stop, visit.stop_id, extra), max_width=360),
                 ).add_to(group)
                 points.append((stop.latitude, stop.longitude))
-            coords.append((HUB_LAT, HUB_LON))
+            coords.append((depot.lat, depot.lon))
             line = geometry_fn(coords) if geometry_fn is not None else None
             folium.PolyLine(
                 line or coords,
@@ -117,7 +134,8 @@ def build_map(
                 weight=4 if load.seq == 1 else 3,
                 opacity=0.85,
                 dash_array=None if load.seq == 1 else "8,6",
-                tooltip=f"{truck.number} load {load.seq}: {clock(load.depart_s)}-{clock(load.return_s)}",
+                tooltip=f"{truck.number} load {load.seq} ({depot.name}): "
+                f"{clock(load.depart_s)}-{clock(load.return_s)}",
             ).add_to(group)
         group.add_to(m)
 

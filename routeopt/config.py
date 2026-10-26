@@ -45,6 +45,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "obs_mode": "last",
         "require_shipment_suffix": False,
         "coverage_radius_miles": 200.0,
+        "trucks_selected": ["T01", "T02"],
     },
     "legacy": {
         "shift_start": dt.time(8, 0),
@@ -62,6 +63,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "obs_mode": "normal",
         "require_shipment_suffix": True,
         "coverage_radius_miles": 75.0,
+        "trucks_selected": [],
     },
 }
 
@@ -152,10 +154,13 @@ class RunSettings(BaseModel):
     @classmethod
     def _apply_profile(cls, data: object) -> object:
         if isinstance(data, dict):
-            profile = data.get("profile") or "ca_lflt"
+            profile = data.get("profile")
+            if profile is None:
+                # a run saved before profiles existed (a full dump) keeps the legacy rules
+                profile = "legacy" if "time_drift_tolerance_s" in data else "ca_lflt"
             if profile not in PROFILE_DEFAULTS:
                 raise ValueError(f"Unknown profile '{profile}' (use ca_lflt or legacy).")
-            data = {**PROFILE_DEFAULTS[str(profile)], **data}
+            data = {**PROFILE_DEFAULTS[str(profile)], **data, "profile": profile}
         return data
 
     @field_validator("pull_forward_days")

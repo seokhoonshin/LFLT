@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from routeopt.config import RunSettings
-from routeopt.domain import Plan, Stop, TruckConfig, seconds_to_time
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, TruckConfig, seconds_to_time
 from routeopt.travel import FALLBACK_WARNING
 
 TIME_FMT = "h:mm AM/PM"
@@ -46,6 +46,10 @@ ROUTES_COLUMNS = [
     "notes",
     "shipment_type",
     "stop_id",
+    "origin_dc",
+    "pallet_required",
+    "priority",
+    "appointment_contact",
 ]
 
 
@@ -234,6 +238,10 @@ def export_excel(
                             sh.notes,
                             sh.shipment_type.value,
                             stop.stop_id,
+                            sh.origin_dc or SITE_BY_CODE[sh.site].dc_codes[0],
+                            "Y" if sh.pallet_required else "N",
+                            sh.priority,
+                            stop.contact,
                         ]
                     )
     _write_table(
@@ -271,6 +279,9 @@ def export_excel(
         "tier",
         "day_tag",
         "shipments",
+        "dc",
+        "pallet_trip",
+        "appointment_contact",
     ]
     stop_rows: list[list[Any]] = []
     for truck in plan.trucks:
@@ -303,6 +314,9 @@ def export_excel(
                         stop.tier if stop else "",
                         stop.day_tag.value if stop else "",
                         len(stop.shipments) if stop else 0,
+                        SITE_BY_CODE[load.site].name,
+                        "Yes" if load.pallet else "",
+                        stop.contact if stop else "",
                     ]
                 )
     _write_table(

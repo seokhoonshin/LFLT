@@ -20,7 +20,7 @@ from reportlab.platypus import (
 )
 
 from routeopt.config import RunSettings
-from routeopt.domain import Load, Plan, PlanTruck, Stop, TruckConfig, clock
+from routeopt.domain import SITE_BY_CODE, Load, Plan, PlanTruck, Stop, TruckConfig, clock
 from routeopt.export.excel import export_filename
 from routeopt.travel import FALLBACK_WARNING
 
@@ -156,12 +156,18 @@ def _load_page(
             _h1,
         ),
         _p(
-            f"Load {load.seq} of {n_loads} | depart {clock(load.depart_s)} | expected return {clock(load.return_s)} | "
+            f"Load {load.seq} of {n_loads} from {SITE_BY_CODE[load.site].name}"
+            + (" (pallet trip)" if load.pallet else "")
+            + f" | depart {clock(load.depart_s)} | expected return {clock(load.return_s)} | "
             f"load-out {load.load_out_volume:.0f} cu ft, {load.load_out_weight:.0f} lb, {load.load_out_pieces} pieces"
             + (
                 f" | reload from {clock(load.reload_start_s)}"
                 if load.reload_start_s is not None
-                else " | pre-loaded before the shift"
+                else (
+                    f" | loading from {clock(settings.shift_start_s)}"
+                    if settings.first_load_minutes
+                    else " | pre-loaded before the shift"
+                )
             )
             + f" | lunch: {truck.lunch.where or 'during the reload'}",
             _h2,
@@ -173,7 +179,7 @@ def _load_page(
             "ETA",
             "Customer window",
             "Customer",
-            "Phone",
+            "Appointment contact / phone",
             "Address",
             "Shipments",
             "Svc min",
@@ -213,7 +219,11 @@ def _load_page(
                 clock(visit.arrive_s),
                 f"{clock(visit.eta_window_start_s)} - {clock(visit.eta_window_end_s)}",
                 _p(stop.customer_label if stop else ""),
-                _p(", ".join(stop.phones) if stop else ""),
+                _p(
+                    " / ".join(x for x in (stop.contact, ", ".join(stop.phones)) if x)
+                    if stop
+                    else ""
+                ),
                 _p(f"{stop.address}, {stop.city} {stop.zip}" if stop else ""),
                 Paragraph(shipments.replace("&", "&amp;"), _body),
                 str(stop.service_total_minutes if stop else ""),

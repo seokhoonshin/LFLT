@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from routeopt.domain import Plan, Stop, clock
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 from routeopt.edit.revalidate import can_export
 from routeopt.export.excel import export_excel
 from routeopt.export.mapping import build_map, map_html
@@ -147,13 +147,22 @@ for truck in plan.trucks:
     )
     with st.expander(title):
         for load in loads:
+            cap = settings.load_cap_cuft(load.pallet)
             st.markdown(
-                f"**Load {load.seq}** · depart {clock(load.depart_s)} · return {clock(load.return_s)} · "
-                f"load-out {load.load_out_volume:.0f} cu ft ({100 * load.load_out_volume / settings.truck_volume_cuft:.0f}%) · "
+                f"**Load {load.seq}** from {SITE_BY_CODE[load.site].name}"
+                + (" (pallet trip)" if load.pallet and cap != settings.truck_volume_cuft else "")
+                + f" · depart {clock(load.depart_s)} · return {clock(load.return_s)} · "
+                f"load-out {load.load_out_volume:.0f} cu ft ({100 * load.load_out_volume / cap:.0f}%) · "
+                f"{load.one_way_miles:.0f} mi one way · "
                 f"max on road {load.max_volume_on_road:.0f} cu ft · {load.drive_minutes:.0f} min / {load.distance_miles:.1f} mi driving"
                 + (
                     f" · reload from {clock(load.reload_start_s)}"
                     if load.reload_start_s is not None
+                    else ""
+                )
+                + (
+                    f" · {load.deadhead_minutes:.0f} min DC-to-DC first"
+                    if load.deadhead_minutes
                     else ""
                 )
             )
