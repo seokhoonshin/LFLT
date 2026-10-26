@@ -281,6 +281,24 @@ with st.expander("Advanced settings", expanded=False):
         disabled=preset != "Custom",
         help=TIP["span_cost_coefficient"],
     )
+    g1, g2, _g3, _g4 = st.columns(4)
+    geocode_mode = g1.selectbox(
+        "Stop locations",
+        ["address", "fill"],
+        index=["address", "fill"].index(defaults.geocode_mode),
+        format_func=lambda v: {
+            "address": "Geocode street address",
+            "fill": "Use file lat/lon",
+        }[v],
+        help=TIP["geocode_mode"],
+    )
+    same_location_minutes = g2.number_input(
+        "Same-point travel (min)",
+        0,
+        60,
+        int(defaults.same_location_travel_minutes),
+        help=TIP["same_location_travel_minutes"],
+    )
 
 try:
     settings = RunSettings(
@@ -305,6 +323,8 @@ try:
         travel_provider=travel_provider,  # type: ignore[arg-type]
         haversine_road_factor=float(road_factor),
         haversine_avg_speed_mph=float(avg_speed),
+        geocode_mode=geocode_mode,  # type: ignore[arg-type]
+        same_location_travel_minutes=int(same_location_minutes),
         pull_forward_value_minutes={1: int(pf1), 2: int(pf2)},
         truck_fixed_cost=int(fixed_cost) if preset == "Custom" else None,
         span_cost_coefficient=int(span_cost) if preset == "Custom" else None,
@@ -331,10 +351,11 @@ ingest_key = (
     settings.stop_buffer_minutes,
     settings.coverage_radius_miles,
     settings.truck_volume_cuft,
+    settings.geocode_mode,
 )
 cache = st.session_state.get("ingest_cache")
 if cache is None or cache[0] != ingest_key:
-    with st.spinner("Checking the workbook (and geocoding any rows without coordinates)…"):
+    with st.spinner("Checking the workbook and geocoding addresses…"):
         geocoder = CensusGeocoder(cache=repo.geocode_cache())
         result = ingest(
             io.BytesIO(st.session_state["upload_bytes"]),

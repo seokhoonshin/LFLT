@@ -321,3 +321,23 @@ def test_sample_workbook_round_trips_through_loader(sample_workbook: Path, fake_
     types = {s.shipment_type for s in res.shipments}
     assert types == {ShipmentType.LMD, ShipmentType.RTN, ShipmentType.INC}
     assert {s.day_tag for s in res.shipments} == {DayTag.D, DayTag.D1, DayTag.D2}
+
+
+def test_address_mode_geocodes_rows_that_already_have_coordinates(fake_geocoder) -> None:  # type: ignore[no-untyped-def]
+    rows = [
+        _row(2, latitude=33.0, longitude=-117.0),  # e.g. a ZIP centroid in the file
+        _row(3, latitude=33.0, longitude=-117.0, address="1 Nowhere Ln"),
+    ]
+    res = validate_rows(rows, PLAN_DATE, make_settings(), geocoder=fake_geocoder)
+    assert res.ok and res.geocoded_rows == [2]
+    assert (res.shipments[0].latitude, res.shipments[0].longitude) != (33.0, -117.0)
+    # unmatched address keeps the file's coordinates, with a warning instead of an error
+    assert (res.shipments[1].latitude, res.shipments[1].longitude) == (33.0, -117.0)
+    assert any(w.row == 3 and "from the file" in w.message for w in res.warnings)
+
+
+def test_fill_mode_keeps_file_coordinates(fake_geocoder) -> None:  # type: ignore[no-untyped-def]
+    rows = [_row(2, latitude=33.0, longitude=-117.0)]
+    res = validate_rows(rows, PLAN_DATE, make_settings(geocode_mode="fill"), geocoder=fake_geocoder)
+    assert fake_geocoder.calls == 0 and res.geocoded_rows == []
+    assert (res.shipments[0].latitude, res.shipments[0].longitude) == (33.0, -117.0)

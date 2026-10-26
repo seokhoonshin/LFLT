@@ -118,6 +118,7 @@ def optimize(
     time-limited and a partial plan (or a clear failure message) always comes back."""
     run_id = run_id or new_run_id()
     rlog = get_logger(__name__, run_id)
+    matrix = matrix.with_same_location_floor(settings.same_location_travel_minutes * 60)
     all_stops, full_matrix = stops, matrix
     stops, matrix, out_of_scope = scope_stops(stops, matrix, settings)
     inputs = SolverInputs(stops=stops, matrix=matrix, settings=settings, trucks=trucks)
