@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--pull-forward", default="", help="comma list of pull-forward days, e.g. 1,2")
     run.add_argument("--trucks", type=int, default=None, help="use only the first N trucks")
     run.add_argument("--lunch-mode", choices=["smart", "simple"], default="smart")
-    run.add_argument("--provider", choices=["auto", "osrm", "haversine"], default="auto")
+    run.add_argument("--provider", choices=["auto", "osrm", "haversine", "tomtom"], default="auto")
     run.add_argument("--max-loads", type=int, default=None, help="default: the profile's")
     run.add_argument(
         "--fixed-cost", type=int, default=None, help="Custom preset: fixed cost per truck"

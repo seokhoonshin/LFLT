@@ -20,7 +20,7 @@ from routeopt.domain import hub_today, time_to_seconds
 
 PresetName = Literal["A", "B", "Custom"]
 LunchMode = Literal["smart", "simple"]
-TravelProviderChoice = Literal["auto", "osrm", "haversine"]
+TravelProviderChoice = Literal["auto", "osrm", "haversine", "tomtom"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
 ObsMode = Literal["last", "exclude", "normal"]
 GeocodeMode = Literal["address", "fill"]
@@ -92,6 +92,10 @@ class AppConfig(BaseSettings):
     osrm_max_table_size: int = Field(default=2000, alias="OSRM_MAX_TABLE_SIZE")
     osrm_timeout_s: float = Field(default=20.0, alias="OSRM_TIMEOUT_S")
     map_component: str = Field(default="html", alias="ROUTEOPT_MAP_COMPONENT")  # html | st_folium
+    tomtom_api_key: str = Field(default="", alias="TOMTOM_API_KEY")
+    tomtom_base_url: str = Field(default="https://api.tomtom.com", alias="TOMTOM_BASE_URL")
+    tomtom_max_cells: int = Field(default=200, alias="TOMTOM_MAX_CELLS")  # per request
+    tomtom_timeout_s: float = Field(default=60.0, alias="TOMTOM_TIMEOUT_S")
 
     @property
     def effective_db_url(self) -> str:
@@ -149,6 +153,10 @@ class RunSettings(BaseModel):
     geocode_mode: GeocodeMode = "address"
     same_location_travel_minutes: int = 15
     traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
+    traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
+    truck_length_ft: float = 26.0  # TomTom truck routing
+    truck_height_ft: float = 13.5
+    truck_gross_weight_lb: float = 26000.0
     pull_forward_value_minutes: dict[int, int] = Field(
         default_factory=lambda: dict(DEFAULT_PULL_FORWARD_VALUE_MINUTES)
     )
@@ -444,7 +452,11 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "eta_window_hours": (
         "The customer window quoted around each ETA (ETA plus or minus this many hours)."
     ),
-    "travel_provider": "Auto uses road travel times from OSRM when it is running, otherwise straight-line estimates.",
+    "travel_provider": (
+        "Auto uses road travel times from OSRM when it is running, otherwise straight-line "
+        "estimates. TomTom uses truck times with predicted traffic (needs TOMTOM_API_KEY; "
+        "falls back to OSRM)."
+    ),
     "haversine_road_factor": (
         "Straight-line distance is multiplied by this to approximate road distance "
         "(estimates only)."
@@ -476,6 +488,14 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "Address = geocode every row from its street address and use the file's latitude/longitude "
         "only when the address cannot be matched. Fill = keep the file's coordinates and geocode "
         "only rows without them."
+    ),
+    "traffic_depart_time": (
+        "TomTom: travel times are predicted for the delivery day at this time (historical "
+        "traffic). A past date uses the same weekday in the coming weeks."
+    ),
+    "truck_dimensions": (
+        "TomTom truck routing: length, height and gross weight (avoids roads the truck may "
+        "not use)."
     ),
     "traffic_factor": (
         "OSRM road times assume empty roads; they are multiplied by this for daytime "

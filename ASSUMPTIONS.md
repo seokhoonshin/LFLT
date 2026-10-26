@@ -47,6 +47,17 @@ as legacy.
 - **Drift check.** A short route that waits for the lunch window on its way back is not a
   drift (the solver budgets the lunch, not the wait).
 - **Trucks.** The CA profile selects T01 and T02.
+- **Traffic.** OSRM times are free-flow: CA LFLT plans on OSRM x `traffic_factor` (1.3;
+  legacy 1.0); distances are not scaled.  Runs save the raw provider matrix (the travel
+  cache is shared) and `planning_matrix()` re-applies the run's factor and same-point floor
+  whenever a run is planned or reopened.
+- **TomTom.** Optional travel source (`travel_provider = "tomtom"`): Matrix Routing v2,
+  truck mode, historical traffic at one representative departure time per run (the
+  routing model has one time per arc, so time-of-day variation is not modelled).  Its
+  times already include traffic, so the traffic factor is not applied.  The matrix source
+  is `tomtom:<hash of departure and truck>` so cache hits only reuse the same day, time and
+  vehicle.  Map polylines still come from OSRM (drawing only).  TomTom's truck dimensions
+  default to a 26 ft box truck, 13.5 ft high, 26,000 lb - confirm for the pilot trucks.
 
 ## General
 

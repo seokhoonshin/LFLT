@@ -22,6 +22,7 @@ from routeopt.export.excel import export_excel
 from routeopt.export.mapping import build_map, map_html
 from routeopt.export.route_sheets_pdf import export_route_sheets
 from routeopt.travel.osrm import OSRMProvider
+from routeopt.travel.tomtom import is_road_source, source_label
 
 from _common import (
     current_run_id,
@@ -81,7 +82,7 @@ st.title(f"Results — run {plan.run_id} · v{plan.plan_version}")
 st.caption(
     f"Delivery day **{plan.plan_date.isoformat()}** · preset **{plan.settings.get('preset')}** · "
     f"optimizer {status_text(plan.solver_stats.status)} in {plan.solver_stats.wall_time_s} s · "
-    f"travel times: **{'OSRM road network' if plan.matrix_source == 'osrm' else 'straight-line estimates'}** · "
+    f"travel times: **{source_label(plan.matrix_source)}** · "
     f"source file: {rec.source_name or '—'}"
 )
 fallback_banner(plan)
@@ -105,7 +106,7 @@ kpi_cards(plan)
 # ---- map --------------------------------------------------------------------------------
 st.subheader("Map")
 geometry_fn = None
-if plan.matrix_source == "osrm" and osrm_healthy():
+if is_road_source(plan.matrix_source) and osrm_healthy():
     provider = OSRMProvider(cfg.osrm_url, timeout_s=cfg.osrm_timeout_s)
     geom_cache: dict = st.session_state.setdefault("geometry_cache", {})
 
@@ -131,7 +132,7 @@ else:
     components.html(
         map_html(plan, stops, settings, geometry_fn=geometry_fn), height=580, scrolling=False
     )
-if plan.matrix_source != "osrm":
+if not is_road_source(plan.matrix_source):
     st.caption("Straight lines: OSRM was not available for this run, so no road geometry is drawn.")
 
 # ---- trucks ------------------------------------------------------------------------------

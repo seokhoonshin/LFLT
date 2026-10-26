@@ -23,6 +23,7 @@ from routeopt.config import RunSettings
 from routeopt.domain import SITE_BY_CODE, Load, Plan, PlanTruck, Stop, TruckConfig, clock
 from routeopt.export.excel import export_filename
 from routeopt.travel import FALLBACK_WARNING
+from routeopt.travel.tomtom import is_road_source
 
 _styles = getSampleStyleSheet()
 _body = ParagraphStyle(
@@ -54,7 +55,7 @@ def _p(text: Any, style: ParagraphStyle = _body) -> Paragraph:
 
 def _footer_lines(plan: Plan) -> list[Paragraph]:
     lines: list[Paragraph] = []
-    if plan.matrix_source != "osrm":
+    if not is_road_source(plan.matrix_source):
         lines.append(_p(FALLBACK_WARNING, _warn))
     if plan.export_override_reason:
         lines.append(_p(f"EXPORTED WITH OVERRIDE: {plan.export_override_reason}", _warn))

@@ -14,6 +14,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from routeopt.config import RunSettings
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, TruckConfig, seconds_to_time
 from routeopt.travel import FALLBACK_WARNING
+from routeopt.travel.tomtom import is_road_source, source_label
 
 TIME_FMT = "h:mm AM/PM"
 HEADER_FILL = PatternFill("solid", fgColor="DDE7F5")
@@ -127,7 +128,7 @@ def export_excel(
     ws = wb.active
     ws.title = "Summary"
     warnings = list(plan.warnings) + list(extra_warnings or [])
-    if plan.matrix_source != "osrm" and FALLBACK_WARNING not in warnings:
+    if not is_road_source(plan.matrix_source) and FALLBACK_WARNING not in warnings:
         warnings.insert(0, FALLBACK_WARNING)
     rows: list[tuple[str, Any]] = [
         ("Run", plan.run_id),
@@ -137,10 +138,7 @@ def export_excel(
         ("Created", plan.created_at.strftime("%Y-%m-%d %H:%M")),
         ("Source file", source_name),
         ("Preset", plan.settings.get("preset", "")),
-        (
-            "Travel times",
-            "OSRM road network" if plan.matrix_source == "osrm" else "ESTIMATED (straight-line)",
-        ),
+        ("Travel times", source_label(plan.matrix_source)),
         ("", ""),
         ("Trucks used / selected", f"{k.trucks_used} / {k.trucks_selected}"),
         ("Loads", k.loads),

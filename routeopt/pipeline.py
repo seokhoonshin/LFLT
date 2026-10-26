@@ -48,6 +48,7 @@ from routeopt.travel import (
 )
 from routeopt.travel.base import Matrix
 from routeopt.travel.cache import TravelCache
+from routeopt.travel.tomtom import is_road_source
 
 log = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ def optimize(
     outcome = solve(inputs)
     plan = extract_plan(outcome, inputs, run_id=run_id, matrix_source=matrix.source)
     plan.out_of_scope = out_of_scope
-    if matrix.source != "osrm":
+    if not is_road_source(matrix.source):
         plan.warnings.insert(0, FALLBACK_WARNING)
     plan.unassigned, anomalies = attribute_reasons(plan, solve_stops, settings, solve_matrix)
     if obs_stops and settings.obs_mode == "exclude":

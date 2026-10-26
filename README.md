@@ -86,6 +86,25 @@ routeopt osrm-check         # -> "OSRM at http://localhost:5000: healthy"
 `docker/osrm/README.md` documents disk/RAM needs, how to change the coverage radius, how
 to refresh the map extract, and troubleshooting.  `OSRM_URL` in `.env` points the app at a different host/port.
 
+### TomTom (optional): truck times with predicted traffic
+
+OSRM gives free-flow car times, so CA LFLT multiplies them by the *traffic factor* (1.3).
+For truck-specific times with traffic, set a TomTom key and pick **Travel times = TomTom**
+on New Run (`--provider tomtom` on the CLI):
+
+1. Create a free key at <https://developer.tomtom.com> (no card; the free plan is a daily
+   request allowance, blocked rather than billed when used up).
+2. Add `TOMTOM_API_KEY=...` to `.env` and restart the app.
+
+The whole stop matrix is requested from TomTom Matrix Routing v2 with `travelMode=truck`
+(length / height / gross weight from Advanced settings), `traffic=historical` and
+`departAt` = the delivery day at *Departure time for traffic* (10:00).  A past delivery day
+uses the same weekday in the coming weeks.  Requests are split into blocks of at most
+`TOMTOM_MAX_CELLS` (200) origin x destination cells.  The result is cached per day, time
+and truck, so re-running the same stops spends nothing.  No key, a refused key, an
+exhausted quota or a network error falls back to OSRM x traffic factor with a warning.
+Customer coordinates are sent to TomTom: check this is allowed before enabling it.
+
 ## 3. Run the app
 
 ```powershell

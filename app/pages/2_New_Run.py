@@ -231,12 +231,13 @@ with st.expander("Advanced settings", expanded=False):
     e1, e2, e3, e4 = st.columns(4)
     travel_provider = e1.selectbox(
         "Travel times",
-        ["auto", "osrm", "haversine"],
-        index=["auto", "osrm", "haversine"].index(defaults.travel_provider),
+        ["auto", "osrm", "haversine", "tomtom"],
+        index=["auto", "osrm", "haversine", "tomtom"].index(defaults.travel_provider),
         format_func=lambda v: {
             "auto": "Auto (OSRM if available)",
             "osrm": "OSRM only",
             "haversine": "Straight-line estimate",
+            "tomtom": "TomTom (truck + predicted traffic)",
         }[v],
         help=TIP["travel_provider"],
     )
@@ -383,6 +384,44 @@ with st.expander("Advanced settings", expanded=False):
         disabled=obs_mode != "last",
         help=TIP["obs_radius_miles"],
     )
+    st.markdown("**TomTom** (used when Travel times = TomTom)")
+    k1, k2, k3, k4 = st.columns(4)
+    use_tomtom = travel_provider == "tomtom"
+    if use_tomtom and not cfg.tomtom_api_key:
+        st.warning("No TOMTOM_API_KEY in .env: this run will use OSRM x traffic factor.")
+    traffic_depart = k1.time_input(
+        "Departure time for traffic",
+        value=defaults.traffic_depart_time,
+        disabled=not use_tomtom,
+        help=TIP["traffic_depart_time"],
+    )
+    truck_length = k2.number_input(
+        "Truck length (ft)",
+        10.0,
+        80.0,
+        float(defaults.truck_length_ft),
+        1.0,
+        disabled=not use_tomtom,
+        help=TIP["truck_dimensions"],
+    )
+    truck_height = k3.number_input(
+        "Truck height (ft)",
+        6.0,
+        15.0,
+        float(defaults.truck_height_ft),
+        0.5,
+        disabled=not use_tomtom,
+        help=TIP["truck_dimensions"],
+    )
+    truck_weight = k4.number_input(
+        "Gross weight (lb)",
+        5000.0,
+        80000.0,
+        float(defaults.truck_gross_weight_lb),
+        500.0,
+        disabled=not use_tomtom,
+        help=TIP["truck_dimensions"],
+    )
     j1, j2, j3, _j4 = st.columns(4)
     geocode_mode = j1.selectbox(
         "Stop locations",
@@ -447,6 +486,10 @@ try:
         geocode_mode=geocode_mode,  # type: ignore[arg-type]
         same_location_travel_minutes=int(same_location_minutes),
         traffic_factor=float(traffic_factor),
+        traffic_depart_time=traffic_depart,
+        truck_length_ft=float(truck_length),
+        truck_height_ft=float(truck_height),
+        truck_gross_weight_lb=float(truck_weight),
         pull_forward_value_minutes={1: int(pf1), 2: int(pf2)},
         truck_fixed_cost=int(fixed_cost) if preset == "Custom" else None,
         span_cost_coefficient=int(span_cost) if preset == "Custom" else None,

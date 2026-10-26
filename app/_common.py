@@ -20,6 +20,7 @@ from routeopt.domain import Plan, Stop, clock, hub_today
 from routeopt.logging_utils import configure_logging
 from routeopt.travel import FALLBACK_WARNING
 from routeopt.travel.osrm import OSRMProvider
+from routeopt.travel.tomtom import is_road_source
 
 PAGE_ICON = "🚚"
 
@@ -64,11 +65,13 @@ def osrm_status_line() -> None:
             "estimates until it is back.",
             icon="⚠️",
         )
+    if cfg.tomtom_api_key:
+        st.sidebar.info("TomTom key configured (Travel times = TomTom).", icon="🚚")
 
 
 def fallback_banner(plan: Plan | None = None) -> None:
     """Persistent banner whenever estimated travel times are in play."""
-    if plan is not None and plan.matrix_source != "osrm":
+    if plan is not None and not is_road_source(plan.matrix_source):
         st.warning(f"{FALLBACK_WARNING}. ETAs on this plan are straight-line estimates.", icon="⚠️")
     elif plan is None and st.session_state.get("travel_fallback"):
         st.warning(f"{FALLBACK_WARNING}. The last run used straight-line estimates.", icon="⚠️")

@@ -90,7 +90,7 @@ class CachedProvider:
             return cached
         self.last_from_cache = False
         matrix = self.provider.matrix(coords)
-        self.cache.put(matrix)
+        self.cache.put(matrix)  # keyed by the matrix's own source (a fallback's, if it fell back)
         return matrix
 
     def route_geometry(self, coords: list[Coord]) -> list[Coord] | None:
