@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,6 +30,45 @@ HUB_ADDRESS = "5550 Mango Ave, Rialto, CA 92377"
 HUB_LAT = 34.1511
 HUB_LON = -117.4319
 HUB_TIMEZONE = "America/Los_Angeles"
+
+
+@dataclass(frozen=True)
+class Site:
+    """A loading site (one or more DC codes at one address).  Every site is a depot node."""
+
+    code: str
+    name: str
+    address: str
+    lat: float
+    lon: float
+    dc_codes: tuple[str, ...]
+
+
+# CA LFLT: LGC2 and LGC7 share 5550 Mango Ave (one site); LGC8 is 5267 Sierra Ave, Fontana
+# (OpenStreetMap house-number point).  The first site is the default for rows without a DC.
+SITES: tuple[Site, ...] = (
+    Site("RIALTO", "LGC2/LGC7", HUB_ADDRESS, HUB_LAT, HUB_LON, ("LGC2", "LGC7")),
+    Site(
+        "FONTANA",
+        "LGC8",
+        "5267 Sierra Ave, Fontana, CA 92336",
+        34.1441316,
+        -117.4359977,
+        ("LGC8",),
+    ),
+)
+DEFAULT_SITE = SITES[0].code
+N_DEPOTS = len(SITES)
+SITE_NODE: dict[str, int] = {s.code: i for i, s in enumerate(SITES)}
+SITE_BY_CODE: dict[str, Site] = {s.code: s for s in SITES}
+DC_TO_SITE: dict[str, str] = {dc: s.code for s in SITES for dc in s.dc_codes}
+
+
+def site_for_dc(dc: str | None) -> str | None:
+    """Site code for a DC code (LGC2/LGC7 -> RIALTO, LGC8 -> FONTANA); None if unknown."""
+    if not dc:
+        return DEFAULT_SITE
+    return DC_TO_SITE.get(dc.strip().upper())
 
 
 def hub_now() -> dt.datetime:
@@ -109,6 +149,10 @@ class Shipment(BaseModel):
     service_minutes: int = 0
     notes: str | None = None
     source_row: int = 0
+    origin_dc: str | None = None  # LGC2 / LGC7 / LGC8 (CA); None = default site
+    site: str = DEFAULT_SITE
+    pallet_required: bool = False
+    priority: int | None = None  # CA: 1 existing LFLT, 2 add-on, 3 low
 
     @property
     def delivery_volume(self) -> float:
@@ -154,6 +198,9 @@ class Stop(BaseModel):
     service_total_minutes: int  # sum of shipment service + stop buffer, once per stop
     day_tag: DayTag
     tier: int = Field(ge=1, le=5)
+    site: str = DEFAULT_SITE
+    pallet: bool = False  # any shipment needs a pallet -> the load uses the pallet limit
+    contact: str = ""  # appointment contact (Memo Text first, else look up by address)
 
     @property
     def customer_label(self) -> str:
@@ -236,6 +283,11 @@ class Load(BaseModel):
     lunch_on_return: bool = False  # lunch taken after the last stop / at the hub
     stops: list[StopVisit] = Field(default_factory=list)
     solver_return_s: int | None = None
+    site: str = DEFAULT_SITE
+    pallet: bool = False
+    deadhead_minutes: float = 0.0  # DC-to-DC drive before this load (turn at another site)
+    one_way_miles: float = 0.0  # DC to the last stop
+    last_delivery_s: int | None = None  # departure from the last stop
 
     @property
     def stop_ids(self) -> list[str]:

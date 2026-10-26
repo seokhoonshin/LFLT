@@ -7,10 +7,11 @@ validator, editor and exports.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from routeopt.config import RunSettings
-from routeopt.domain import DayTag, OrderType, Shipment, ShipmentType, Stop
+from routeopt.domain import DEFAULT_SITE, DayTag, OrderType, Shipment, ShipmentType, Stop
 from routeopt.ingest.validator import RowIssue, haversine_miles, normalize_address_key
 
 NEAR_DUPLICATE_METERS = 10.0
@@ -55,6 +56,33 @@ def stop_tier(day_tag: DayTag, order_types: list[OrderType]) -> int:
     return 3
 
 
+_PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_NAME_RE = re.compile(
+    r"(?:call|contact|ask for|attn:?)\s+([A-Z][a-zA-Z'-]+(?:\s[A-Z][a-zA-Z'-]+)?)"
+)
+LOOK_UP_CONTACT = "Look up the official contact by address"
+
+
+def appointment_contact(texts: list[str]) -> str:
+    """Delivery appointment contact: a phone / e-mail written in Memo Text or notes (with the
+    name next to it when there is one), otherwise look the official contact up by address."""
+    for text in texts:
+        found = _PHONE_RE.search(text) or _EMAIL_RE.search(text)
+        if not found:
+            continue
+        name = _NAME_RE.search(text)
+        return f"{name.group(1)} {found.group(0)}" if name else found.group(0)
+    return LOOK_UP_CONTACT
+
+
+def stop_key(shipment: Shipment) -> str:
+    """Consolidation key: address + ZIP, per loading site (one address served from LGC2 and
+    from LGC8 is two stops; LGC2 and LGC7 are one site)."""
+    key = normalize_address_key(shipment.address, shipment.zip)
+    return key if shipment.site == DEFAULT_SITE else f"{key}|{shipment.site}"
+
+
 def build_stop(stop_id: str, key: str, shipments: list[Shipment], settings: RunSettings) -> Stop:
     """Compute all stop attributes from its shipments."""
     first = shipments[0]
@@ -77,7 +105,16 @@ def build_stop(stop_id: str, key: str, shipments: list[Shipment], settings: RunS
         if s.purchase_order and s.purchase_order not in pos:
             pos.append(s.purchase_order)
     day_tag = min((s.day_tag for s in shipments), key=lambda d: d.offset)
-    service_total = sum(s.service_minutes for s in shipments) + settings.stop_buffer_minutes
+    if settings.unload_minutes_per_cuft is not None:
+        moved = sum(s.delivery_volume + s.pickup_volume for s in shipments)
+        unload = round(moved * settings.unload_minutes_per_cuft)
+    else:
+        unload = sum(s.service_minutes for s in shipments)
+    service_total = unload + settings.stop_buffer_minutes
+    priorities = [s.priority for s in shipments if s.priority is not None]
+    tier = stop_tier(day_tag, order_types)
+    if priorities and day_tag == DayTag.D:
+        tier = min(priorities)  # CA: priority 1 existing LFLT, 2 add-on, 3 low
     return Stop(
         stop_id=stop_id,
         key=key,
@@ -100,7 +137,10 @@ def build_stop(stop_id: str, key: str, shipments: list[Shipment], settings: RunS
         pieces_out=sum(s.pieces for s in shipments if s.shipment_type == ShipmentType.RTN),
         service_total_minutes=service_total,
         day_tag=day_tag,
-        tier=stop_tier(day_tag, order_types),
+        tier=tier,
+        site=first.site,
+        pallet=any(s.pallet_required for s in shipments),
+        contact=appointment_contact([s.notes for s in shipments if s.notes]),
     )
 
 
@@ -108,7 +148,7 @@ def consolidate(shipments: list[Shipment], settings: RunSettings) -> Consolidati
     """Group shipments by address key into stops, in first-seen order, ids S001.."""
     groups: dict[str, list[Shipment]] = {}
     for s in shipments:
-        groups.setdefault(normalize_address_key(s.address, s.zip), []).append(s)
+        groups.setdefault(stop_key(s), []).append(s)
     stops: list[Stop] = []
     warnings: list[RowIssue] = []
     for i, (key, group) in enumerate(groups.items(), start=1):

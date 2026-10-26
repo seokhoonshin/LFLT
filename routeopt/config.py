@@ -23,6 +23,47 @@ LunchMode = Literal["smart", "simple"]
 TravelProviderChoice = Literal["auto", "osrm", "haversine"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
 ObsMode = Literal["last", "exclude", "normal"]
+ProfileName = Literal["ca_lflt", "legacy"]
+
+# Values a profile supplies for every setting the caller does not give explicitly.
+# ``ca_lflt`` = CA LFLT RouteOpt Conditions (docs/CA_LFLT_RouteOpt_Conditions_EN.md);
+# ``legacy`` = the original single-hub brief.
+PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
+    "ca_lflt": {
+        "shift_start": dt.time(6, 0),
+        "first_load_minutes": 60,
+        "earliest_delivery": dt.time(8, 0),
+        "truck_volume_cuft": 800.0,
+        "volume_strict": True,
+        "pallet_volume_cuft": 400.0,
+        "unload_minutes_per_cuft": 0.1,
+        "max_loads_per_truck": 2,
+        "max_one_way_miles": 200.0,
+        "carrier_check_miles": 150.0,
+        "two_turn_max_miles": 300.0,
+        "turn_gap_minutes": 180,
+        "obs_mode": "last",
+        "require_shipment_suffix": False,
+        "coverage_radius_miles": 200.0,
+    },
+    "legacy": {
+        "shift_start": dt.time(8, 0),
+        "first_load_minutes": 0,
+        "earliest_delivery": None,
+        "truck_volume_cuft": 600.0,
+        "volume_strict": False,
+        "pallet_volume_cuft": None,
+        "unload_minutes_per_cuft": None,
+        "max_loads_per_truck": 3,
+        "max_one_way_miles": None,
+        "carrier_check_miles": None,
+        "two_turn_max_miles": None,
+        "turn_gap_minutes": 0,
+        "obs_mode": "normal",
+        "require_shipment_suffix": True,
+        "coverage_radius_miles": 75.0,
+    },
+}
 
 DEFAULT_TIER_PENALTIES: dict[int, int] = {1: 100_000_000, 2: 10_000_000, 3: 1_000_000}
 DEFAULT_PULL_FORWARD_VALUE_MINUTES: dict[int, int] = {1: 240, 2: 120}
@@ -62,12 +103,18 @@ class AppConfig(BaseSettings):
 class RunSettings(BaseModel):
     """Per-run settings (brief 4.4).  Every field has a planner-facing tooltip in the UI."""
 
+    profile: ProfileName = "ca_lflt"
     plan_date: dt.date = Field(default_factory=lambda: hub_today() + dt.timedelta(days=2))
     pull_forward_days: list[int] = Field(default_factory=list)  # subset of [1, 2]
     trucks_selected: list[str] = Field(default_factory=list)  # empty = all active trucks
-    shift_start: dt.time = dt.time(8, 0)
+    shift_start: dt.time = dt.time(6, 0)
+    first_load_minutes: int = 60  # loading before the first departure (live loading)
+    earliest_delivery: dt.time | None = dt.time(8, 0)  # first appointment; early trucks wait
     on_duty_hours: float = 10.0
-    truck_volume_cuft: float = 600.0
+    truck_volume_cuft: float = 800.0
+    volume_strict: bool = True  # "less than" the cap (CA) instead of "at most"
+    pallet_volume_cuft: float | None = 400.0  # limit for a load with any pallet shipment
+    unload_minutes_per_cuft: float | None = 0.1  # None = use the upload's service_minutes
     truck_weight_lb_cap: float | None = None
     truck_pieces_cap: int | None = None
     stop_buffer_minutes: int = 20
@@ -76,7 +123,12 @@ class RunSettings(BaseModel):
     lunch_earliest: dt.time | None = dt.time(11, 0)
     lunch_latest: dt.time | None = dt.time(14, 0)
     lunch_mode: LunchMode = "smart"
-    max_loads_per_truck: int = 3
+    max_loads_per_truck: int = 2
+    max_one_way_miles: float | None = 200.0  # DC to the last stop of a load ("less than")
+    carrier_check_miles: float | None = 150.0  # warn: confirm with the carrier above this
+    two_turn_max_miles: float | None = 300.0  # all turns of a two-turn truck ("less than")
+    turn_gap_minutes: int = 180  # a turn departs >= last delivery of the previous turn + gap
+    require_shipment_suffix: bool = False  # legacy: ids must end in _LMD/_RTN/_INC
     preset: PresetName = "A"
     solve_time_seconds: int = 60
     eta_window_hours: float = 2.0
@@ -91,11 +143,21 @@ class RunSettings(BaseModel):
     tier_penalties: dict[int, int] = Field(default_factory=lambda: dict(DEFAULT_TIER_PENALTIES))
     truck_fixed_cost: int | None = None  # Custom preset only
     span_cost_coefficient: int | None = None  # Custom preset only
-    coverage_radius_miles: float = 75.0
+    coverage_radius_miles: float = 200.0
     first_solution_strategy: FirstSolution = "PARALLEL_CHEAPEST_INSERTION"
     time_drift_tolerance_s: int = 60
 
     # ---- validation -----------------------------------------------------------------
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_profile(cls, data: object) -> object:
+        if isinstance(data, dict):
+            profile = data.get("profile") or "ca_lflt"
+            if profile not in PROFILE_DEFAULTS:
+                raise ValueError(f"Unknown profile '{profile}' (use ca_lflt or legacy).")
+            data = {**PROFILE_DEFAULTS[str(profile)], **data}
+        return data
+
     @field_validator("pull_forward_days")
     @classmethod
     def _check_pull_forward_days(cls, v: list[int]) -> list[int]:
@@ -174,7 +236,38 @@ class RunSettings(BaseModel):
     @property
     def volume_cap_tenths(self) -> int:
         """Truck volume cap in tenths of a cubic foot (solver units)."""
-        return round(self.truck_volume_cuft * 10)
+        return round(self.truck_volume_cuft * 10) - (1 if self.volume_strict else 0)
+
+    @property
+    def pallet_cap_tenths(self) -> int | None:
+        if self.pallet_volume_cuft is None:
+            return None
+        return round(self.pallet_volume_cuft * 10) - (1 if self.volume_strict else 0)
+
+    def load_cap_cuft(self, pallet: bool) -> float:
+        """Volume limit of one load (the pallet limit when any stop needs a pallet)."""
+        if pallet and self.pallet_volume_cuft is not None:
+            return self.pallet_volume_cuft
+        return self.truck_volume_cuft
+
+    def volume_exceeds(self, volume: float, pallet: bool = False) -> bool:
+        cap = self.load_cap_cuft(pallet)
+        return volume >= cap - 1e-6 if self.volume_strict else volume > cap + 1e-6
+
+    @property
+    def first_load_seconds(self) -> int:
+        return self.first_load_minutes * 60
+
+    @property
+    def earliest_delivery_rel_s(self) -> int:
+        """First allowed arrival at a stop, seconds after shift start (0 = no limit)."""
+        if self.earliest_delivery is None:
+            return 0
+        return max(0, time_to_seconds(self.earliest_delivery) - self.shift_start_s)
+
+    @property
+    def turn_gap_seconds(self) -> int:
+        return self.turn_gap_minutes * 60
 
     @property
     def eta_window_seconds(self) -> int:
@@ -328,6 +421,19 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "(estimates only)."
     ),
     "haversine_avg_speed_mph": "Average speed assumed for straight-line estimates (estimates only).",
+    "profile": (
+        "CA LFLT = the CA pilot rules (06:00 start, 800 / 400 cu ft, two turns, 200 / 300 mi). "
+        "Legacy = the original single-hub brief."
+    ),
+    "first_load_minutes": "Loading time at the DC before the first departure of the day.",
+    "earliest_delivery": "First customer appointment; a truck that arrives earlier waits.",
+    "volume_strict": "Volume must stay below the cap (not equal to it).",
+    "pallet_volume_cuft": "Volume limit of a load carrying any shipment that needs a pallet.",
+    "unload_minutes_per_cuft": "Unloading minutes per cubic foot (added to the stop buffer).",
+    "max_one_way_miles": "One-way limit: miles from the DC to a load's last stop.",
+    "carrier_check_miles": "Loads farther than this one way are flagged: confirm with the carrier.",
+    "two_turn_max_miles": "Total miles of all turns of a truck that runs a second turn.",
+    "turn_gap_minutes": "A second turn leaves at least this long after the first turn's last delivery.",
     "obs_mode": (
         "Last = plan every other stop first, then add OBS-only stops just to raise the stop "
         "count, on loads that already pass within the OBS radius. Exclude = leave OBS-only "
