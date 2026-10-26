@@ -383,7 +383,7 @@ with st.expander("Advanced settings", expanded=False):
         disabled=obs_mode != "last",
         help=TIP["obs_radius_miles"],
     )
-    j1, j2, _j3, _j4 = st.columns(4)
+    j1, j2, j3, _j4 = st.columns(4)
     geocode_mode = j1.selectbox(
         "Stop locations",
         ["address", "fill"],
@@ -400,6 +400,14 @@ with st.expander("Advanced settings", expanded=False):
         60,
         int(defaults.same_location_travel_minutes),
         help=TIP["same_location_travel_minutes"],
+    )
+    traffic_factor = j3.number_input(
+        "Traffic factor (x OSRM time)",
+        1.0,
+        3.0,
+        float(defaults.traffic_factor),
+        0.05,
+        help=TIP["traffic_factor"],
     )
 
 try:
@@ -438,6 +446,7 @@ try:
         obs_radius_miles=float(obs_radius),
         geocode_mode=geocode_mode,  # type: ignore[arg-type]
         same_location_travel_minutes=int(same_location_minutes),
+        traffic_factor=float(traffic_factor),
         pull_forward_value_minutes={1: int(pf1), 2: int(pf2)},
         truck_fixed_cost=int(fixed_cost) if preset == "Custom" else None,
         span_cost_coefficient=int(span_cost) if preset == "Custom" else None,
@@ -621,7 +630,7 @@ repo.save_run(
     plan,
     res.all_stops,
     meta["settings"],
-    res.full_matrix or res.matrix,
+    res.raw_matrix or res.full_matrix or res.matrix,
     meta["shipments"],
     meta["trucks"],
     source_name=st.session_state.get("upload_name", ""),

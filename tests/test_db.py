@@ -44,7 +44,7 @@ def _save(repo: Repository, res: OptimizeResult, run_id: str | None = None) -> s
         plan,
         res.all_stops,
         make_settings(solve_time_seconds=2),
-        res.full_matrix or res.matrix,
+        res.raw_matrix or res.full_matrix or res.matrix,
         shipments,
         default_trucks()[:3],
         source_name="sample.xlsx",
@@ -202,3 +202,30 @@ def test_alembic_upgrade_matches_create_all(tmp_path: Path) -> None:
     }
     assert set(Base.metadata.tables) <= tables
     assert "alembic_version" in tables
+
+
+def test_osrm_traffic_factor_applied_once_and_cache_stays_raw(repo: Repository) -> None:
+    from routeopt.config import RunSettings
+    from routeopt.travel import planning_matrix
+    from routeopt.travel.cache import TravelCache
+
+    from tests.factories import PLAN_DATE
+
+    settings = RunSettings(plan_date=PLAN_DATE, solve_time_seconds=2)  # CA LFLT: x 1.3
+    stops = make_stops(4, volume=40, service=30, seed=52, settings=settings)
+    raw = HaversineProvider().matrix(node_coords(stops)).model_copy(update={"source": "osrm"})
+    res = optimize(stops, raw, settings, default_trucks()[:2])
+    assert res.raw_matrix is raw
+    a, b = 2, 3  # two stops
+    assert res.full_matrix is not None
+    assert res.full_matrix.durations_s[a][b] == round(raw.durations_s[a][b] * 1.3)
+    shipments = [s for stop in res.all_stops for s in stop.shipments]
+    repo.save_run(
+        res.plan, res.all_stops, settings, res.raw_matrix, shipments, default_trucks()[:2]
+    )
+    from routeopt.db.repo import DbTravelCacheStore
+
+    cached = TravelCache(DbTravelCacheStore(repo._sf)).get("osrm", node_coords(res.all_stops))
+    assert cached is not None and cached.durations_s == raw.durations_s  # raw in the cache
+    rec = repo.load_run(res.plan.run_id)
+    assert rec.matrix.durations_s == planning_matrix(raw, settings).durations_s  # x 1.3 once

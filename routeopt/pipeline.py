@@ -39,7 +39,13 @@ from routeopt.solver.obs_addon import (
 from routeopt.solver.plan_validator import validate_plan
 from routeopt.solver.solve import solve
 from routeopt.solver.unassigned_reasons import attribute_reasons
-from routeopt.travel import FALLBACK_WARNING, ProviderChoice, node_coords, select_provider
+from routeopt.travel import (
+    FALLBACK_WARNING,
+    ProviderChoice,
+    node_coords,
+    planning_matrix,
+    select_provider,
+)
 from routeopt.travel.base import Matrix
 from routeopt.travel.cache import TravelCache
 
@@ -107,6 +113,7 @@ class OptimizeResult:
     anomalies: list[str] = field(default_factory=list)
     all_stops: list[Stop] = field(default_factory=list)
     full_matrix: Matrix | None = None
+    raw_matrix: Matrix | None = None  # the provider's matrix, as cached / saved with the run
 
     @property
     def in_scope_ids(self) -> set[str]:
@@ -124,9 +131,8 @@ def optimize(
     time-limited and a partial plan (or a clear failure message) always comes back."""
     run_id = run_id or new_run_id()
     rlog = get_logger(__name__, run_id)
-    matrix = matrix.with_same_location_floor(
-        settings.same_location_travel_minutes * 60, first_stop=N_DEPOTS
-    )
+    raw_matrix = matrix
+    matrix = planning_matrix(matrix, settings)
     all_stops, full_matrix = stops, matrix
     stops, matrix, out_of_scope = scope_stops(stops, matrix, settings)
     # OBS-only stops are left out of the solve unless they compete normally
@@ -171,6 +177,7 @@ def optimize(
         anomalies=anomalies,
         all_stops=all_stops,
         full_matrix=full_matrix,
+        raw_matrix=raw_matrix,
     )
 
 

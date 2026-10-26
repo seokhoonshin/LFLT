@@ -33,6 +33,14 @@ class Matrix(BaseModel):
     def distance_miles(self, i: int, j: int) -> float:
         return self.distances_m[i][j] / 1609.344
 
+    def with_traffic_factor(self, factor: float) -> Matrix:
+        """Copy with every drive time multiplied by ``factor`` (distances unchanged)."""
+        if factor == 1.0:
+            return self
+        durations = [[round(d * factor) for d in row] for row in self.durations_s]
+        note = f"Road times x {factor:g} for traffic."
+        return self.model_copy(update={"durations_s": durations, "notes": [*self.notes, note]})
+
     def with_same_location_floor(
         self, min_seconds: int, within_m: int = 160, first_stop: int = 1
     ) -> Matrix:

@@ -187,7 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             plan,
             result.all_stops,
             settings,
-            result.full_matrix or result.matrix,
+            result.raw_matrix or result.full_matrix or result.matrix,
             ing.validation.shipments,
             trucks,
             source_name=str(args.workbook),

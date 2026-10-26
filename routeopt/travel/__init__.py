@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from routeopt.config import AppConfig, RunSettings
-from routeopt.domain import SITES, Stop
+from routeopt.domain import N_DEPOTS, SITES, Stop
 from routeopt.travel.base import Coord, Matrix, TravelProvider
 from routeopt.travel.cache import CachedProvider, TravelCache
 from routeopt.travel.haversine import HaversineProvider
@@ -60,6 +60,17 @@ def select_provider(
     return choice
 
 
+def planning_matrix(matrix: Matrix, settings: RunSettings) -> Matrix:
+    """The times a plan is built and checked on: OSRM free-flow times x the traffic factor,
+    and a floor between two different stops on the same point.  Applied on top of the raw
+    provider matrix every time (the cache only ever holds raw matrices)."""
+    if matrix.source == "osrm":
+        matrix = matrix.with_traffic_factor(settings.traffic_factor)
+    return matrix.with_same_location_floor(
+        settings.same_location_travel_minutes * 60, first_stop=N_DEPOTS
+    )
+
+
 def node_coords(stops: list[Stop]) -> list[Coord]:
     """Nodes 0..N_DEPOTS-1 = loading sites (every site, used or not, so node numbers never
     shift), then the stops in solver order."""
@@ -76,5 +87,6 @@ __all__ = [
     "TravelCache",
     "TravelProvider",
     "node_coords",
+    "planning_matrix",
     "select_provider",
 ]

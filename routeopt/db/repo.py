@@ -37,7 +37,7 @@ from routeopt.db.models import (
 )
 from routeopt.domain import Plan, Shipment, Stop, TruckConfig, hub_now
 from routeopt.ingest.validator import GeocodeResult
-from routeopt.travel import node_coords
+from routeopt.travel import node_coords, planning_matrix
 from routeopt.travel.base import Matrix, coords_hash
 from routeopt.travel.cache import TravelCache
 
@@ -478,6 +478,8 @@ class Repository:
         matrix = TravelCache(DbTravelCacheStore(self._sf)).get(
             str(record_fields["matrix_source"]), node_coords(stops)
         )
+        if matrix is not None:  # the cache holds the raw matrix; plans use the adjusted one
+            matrix = planning_matrix(matrix, settings)
         if matrix is None:
             raise LookupError(
                 f"The travel matrix for run {run_id} is no longer in the cache; re-run the plan "

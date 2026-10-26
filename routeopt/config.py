@@ -49,6 +49,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "trucks_selected": ["T01", "T02"],
         "geocode_mode": "address",
         "same_location_travel_minutes": 15,
+        "traffic_factor": 1.3,
     },
     "legacy": {
         "shift_start": dt.time(8, 0),
@@ -69,6 +70,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "trucks_selected": [],
         "geocode_mode": "fill",
         "same_location_travel_minutes": 0,
+        "traffic_factor": 1.0,
     },
 }
 
@@ -146,6 +148,7 @@ class RunSettings(BaseModel):
     obs_radius_miles: float = 5.0
     geocode_mode: GeocodeMode = "address"
     same_location_travel_minutes: int = 15
+    traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
     pull_forward_value_minutes: dict[int, int] = Field(
         default_factory=lambda: dict(DEFAULT_PULL_FORWARD_VALUE_MINUTES)
     )
@@ -197,6 +200,13 @@ class RunSettings(BaseModel):
     def _check_obs_radius(cls, v: float) -> float:
         if not 0 < v <= 50:
             raise ValueError("OBS radius must be between 0 and 50 miles.")
+        return v
+
+    @field_validator("traffic_factor")
+    @classmethod
+    def _check_traffic_factor(cls, v: float) -> float:
+        if not 1.0 <= v <= 3.0:
+            raise ValueError("Traffic factor must be between 1.0 and 3.0.")
         return v
 
     @field_validator("same_location_travel_minutes")
@@ -466,6 +476,10 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "Address = geocode every row from its street address and use the file's latitude/longitude "
         "only when the address cannot be matched. Fill = keep the file's coordinates and geocode "
         "only rows without them."
+    ),
+    "traffic_factor": (
+        "OSRM road times assume empty roads; they are multiplied by this for daytime "
+        "traffic (distances are not changed). Straight-line estimates are not scaled."
     ),
     "same_location_travel_minutes": (
         "Minimum driving minutes between two different stops that sit on the same point "
