@@ -108,6 +108,15 @@ Customer coordinates are sent to TomTom: check this is allowed before enabling i
 
 ## 3. Run the app
 
+**CA LFLT pilot, one command** (OSRM container `routeopt-osrm-ca` on port 5001):
+
+```powershell
+cd <this folder>
+.\start_ca.ps1            # starts OSRM, stops an old app, opens http://localhost:8520
+.\start_ca.ps1 -Update    # git pull first (when the folder is a git clone)
+```
+
+
 ```powershell
 streamlit run app\Home.py
 ```
