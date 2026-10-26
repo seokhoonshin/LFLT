@@ -173,7 +173,7 @@ CA LFLT uploads may also carry (and need none of `model_code`, `weight_lb`, `pie
 
 | Column | Notes |
 |---|---|
-| `origin_dc` | `LGC2`, `LGC7` or `LGC8` (aliases: `DC`, `FRST_SHPG_LOC_CD`, …); blank = LGC2/LGC7 |
+| `origin_dc` | `LGC2`, `LGC7` or `LGC8` (aliases: `DC`, `FRST_SHPG_LOC_CD`, …); blank = LGC2 |
 | `pallet_required` | `Y` / `N`, or the product group (aliases `HQ`, `product group`): `HA` = no pallet, every other group (`AC`, `ES`, `BS`, `MS`, …) = pallet; a load with any pallet shipment stays below 400 cu ft |
 | `priority` | `1` existing LFLT, `2` add-on candidate, `3` low priority (the stop's tier) |
 | `Memo Text` | merged into notes; a phone / e-mail in it becomes the stop's appointment contact |
