@@ -7,6 +7,18 @@ picks a preset, runs a ≤ 60-second optimization, reviews the routes on a map, 
 if needed, and exports an Excel plan plus printable PDF route sheets.  Every run, version,
 edit and export is saved for audit.
 
+**CA LFLT pilot (default rules).**  Runs use the *CA LFLT* profile unless *Legacy* is
+chosen on New Run (`--profile legacy` on the CLI).  It plans two trucks out of LGC2/LGC7
+(5550 Mango Ave, Rialto) and LGC8 (5267 Sierra Ave, Fontana) under the rules in
+[`docs/CA_LFLT_RouteOpt_Conditions_EN.md`](docs/CA_LFLT_RouteOpt_Conditions_EN.md)
+([Korean](docs/CA_LFLT_RouteOpt_Conditions_KR.md)): 06:00 start with 60 min loading,
+first appointment 08:00, less than 800 cu ft per load (less than 400 with a pallet),
+20 min per stop + 0.1 min per cu ft, less than 200 mi one way (150-200 mi flagged for a
+carrier check), two turns with less than 300 mi in total and at least 3 h between the
+first turn's last delivery and the second turn's departure, lunch 30 min between 11:00
+and 14:00.  OBS-only stops can be excluded or added last, only next to planned stops.
+How each rule is modelled is in [ASSUMPTIONS.md](ASSUMPTIONS.md#ca-lflt-profile).
+
 Everything is open source and runs locally: **Google OR-Tools** (routing), **OSRM** +
 **OpenStreetMap** (road travel times, via Docker), the **US Census Geocoder** (only for
 rows without coordinates), **Streamlit** (UI), **SQLAlchemy/SQLite** (history),
@@ -135,7 +147,18 @@ required header cannot be matched.
 | `pieces` | yes | ≥ 1 for LMD/RTN, 0 allowed for INC |
 | `service_minutes` | yes | install / pickup / check time |
 
-Rows sharing an address (+ zip) become one **stop**, always served together by one load.
+CA LFLT uploads may also carry (and need none of `model_code`, `weight_lb`, `pieces`,
+`service_minutes`, nor the `_LMD`/`_RTN`/`_INC` suffix — every row is a delivery):
+
+| Column | Notes |
+|---|---|
+| `origin_dc` | `LGC2`, `LGC7` or `LGC8` (aliases: `DC`, `FRST_SHPG_LOC_CD`, …); blank = LGC2/LGC7 |
+| `pallet_required` | `Y` / `N` (`HA` also counts as Y); a load with any pallet shipment stays below 400 cu ft |
+| `priority` | `1` existing LFLT, `2` add-on candidate, `3` low priority (the stop's tier) |
+| `Memo Text` | merged into notes; a phone / e-mail in it becomes the stop's appointment contact |
+
+Rows sharing an address (+ zip) become one **stop**, always served together by one load
+(per DC: the same address served from LGC2 and from LGC8 is two stops).
 
 ## 6. Settings reference
 

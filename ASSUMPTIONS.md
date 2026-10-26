@@ -3,6 +3,49 @@
 Every item below is either an interpretation of something the brief leaves open, or a
 deliberate deviation.  Items are grouped by milestone; "(deviation)" marks the latter.
 
+## CA LFLT profile
+
+The rules are listed in `docs/CA_LFLT_RouteOpt_Conditions_EN.md`; this is how each is
+modelled.  `RunSettings.profile` (`ca_lflt` default, `legacy` = the original brief) fills
+every setting a run does not give explicitly; a run saved before profiles existed is read
+as legacy.
+
+- **Sites.** LGC2 and LGC7 (5550 Mango Ave) are one site at the legacy hub point; LGC8 is
+  5267 Sierra Ave, Fontana (OpenStreetMap house point 34.1441316, -117.4359977).  Every
+  site is a depot node ahead of the stops, used or not, so node numbers never shift.  A
+  stop is keyed by address + ZIP *per site*.  A load leaves from and returns to the site
+  of its stops; a later turn at another site first drives DC-to-DC.
+- **Vehicles.** One OR-Tools vehicle per (truck, turn, site, trip kind); at most one of
+  each (truck, turn) runs and turn k+1 only if turn k does.  A stop may only ride on its
+  site's vehicles (`VehicleVar.RemoveValues`).  Unused depot nodes are forced inactive.
+- **Volume.** "Less than" limits: 799.9 / 399.9 cu ft in the solver.  A *pallet trip* is a
+  load with any pallet shipment; pallet stops only ride on pallet-trip vehicles, other
+  stops may join them (rule 7: mixed loads take the pallet limit).
+- **Time.** Shift 06:00; turn 1 departs after `first_load_minutes` (60).  Stops are not
+  served before 08:00 (the truck waits; the wait counts on duty).  Stop time = 20 min +
+  round(cu ft x 0.1) per stop; the upload's `service_minutes` is ignored.
+- **Turns.** Turn k+1 departs at the later of (return + DC-to-DC + reload) and (turn k's
+  last delivery = departure from its last stop + `turn_gap_minutes` 180).  A twin of the
+  time dimension (`last_dep`, return arcs carry no travel) gives the solver that
+  departure.  Lunch during the reload as before.
+- **Distance.** One way = road miles from the DC to a load's last stop (< 200, a
+  dimension); 150-200 mi is a *carrier check* warning.  A truck that runs two turns keeps
+  the miles of all its turns < 300; a single-turn truck has only the one-way limit.
+- **Two Stop Rule (50 mi = 2 h).** Off, as decided: transit is OSRM x traffic factor;
+  stop count is the goal.
+- **Closest orders first.** Not a constraint: the presets / first-solution strategy
+  cover it.
+- **Priority.** Upload `priority` 1/2/3 is the D-stop tier (existing tier penalties).
+- **OBS.** `obs_mode`: `last` (plan the rest first, then add OBS-only stops to existing
+  loads within `obs_radius_miles` (5, straight line) of a planned non-OBS stop, cheapest
+  extra time first, never removing a stop or opening a load), `exclude`, or `normal`.
+- **Appointment contact.** The first phone / e-mail in Memo Text or notes (with the name
+  after "call / contact / ask for / attn" when present), otherwise "Look up the official
+  contact by address".
+- **Drift check.** A short route that waits for the lunch window on its way back is not a
+  drift (the solver budgets the lunch, not the wait).
+- **Trucks.** The CA profile selects T01 and T02.
+
 ## General
 
 - **Repo location.** The repository is delivered as `routeopt/` inside the connected
