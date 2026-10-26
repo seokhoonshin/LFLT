@@ -8,8 +8,9 @@ if needed, and exports an Excel plan plus printable PDF route sheets.  Every run
 edit and export is saved for audit.
 
 **CA LFLT pilot (default rules).**  Runs use the *CA LFLT* profile unless *Legacy* is
-chosen on New Run (`--profile legacy` on the CLI).  It plans two trucks out of LGC2/LGC7
-(5550 Mango Ave, Rialto) and LGC8 (5267 Sierra Ave, Fontana) under the rules in
+chosen on New Run (`--profile legacy` on the CLI).  It plans two trucks out of LGC2 and LGC7
+(two DCs at 5550 Mango Ave, Rialto) and LGC8 (5267 Sierra Ave, Fontana); a load is picked up
+at one DC only under the rules in
 [`docs/CA_LFLT_RouteOpt_Conditions_EN.md`](docs/CA_LFLT_RouteOpt_Conditions_EN.md)
 ([Korean](docs/CA_LFLT_RouteOpt_Conditions_KR.md)): 06:00 start with 60 min loading,
 first appointment 08:00, less than 800 cu ft per load (less than 400 when any shipment

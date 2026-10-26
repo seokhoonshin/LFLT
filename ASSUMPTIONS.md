@@ -10,11 +10,13 @@ modelled.  `RunSettings.profile` (`ca_lflt` default, `legacy` = the original bri
 every setting a run does not give explicitly; a run saved before profiles existed is read
 as legacy.
 
-- **Sites.** LGC2 and LGC7 (5550 Mango Ave) are one site at the legacy hub point; LGC8 is
-  5267 Sierra Ave, Fontana (OpenStreetMap house point 34.1441316, -117.4359977).  Every
-  site is a depot node ahead of the stops, used or not, so node numbers never shift.  A
-  stop is keyed by address + ZIP *per site*.  A load leaves from and returns to the site
-  of its stops; a later turn at another site first drives DC-to-DC.
+- **Sites.** LGC2, LGC7 and LGC8 are three DCs; a load is picked up at one DC only.  LGC2
+  and LGC7 share 5550 Mango Ave (the legacy hub point), so a second turn that switches
+  between them drives nothing; LGC8 is 5267 Sierra Ave, Fontana (OpenStreetMap house point
+  34.1441316, -117.4359977).  Every site is a depot node ahead of the stops, used or not, so
+  node numbers never shift.  A stop is keyed by address + ZIP *per DC*.  A load leaves
+  from and returns to its DC; a later turn at another DC first drives DC-to-DC.  Runs saved
+  when LGC2 and LGC7 were one site (codes RIALTO / FONTANA) load as LGC2 / LGC8.
 - **Vehicles.** One OR-Tools vehicle per (truck, turn, site, trip kind); at most one of
   each (truck, turn) runs and turn k+1 only if turn k does.  A stop may only ride on its
   site's vehicles (`VehicleVar.RemoveValues`).  Unused depot nodes are forced inactive.

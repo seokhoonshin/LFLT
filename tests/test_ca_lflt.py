@@ -25,7 +25,7 @@ def _ca(**kw: object) -> RunSettings:
 
 
 def _ship(
-    miles: float, bearing: float, *, site: str = "RIALTO", pallet: bool = False, **kw: object
+    miles: float, bearing: float, *, site: str = "LGC2", pallet: bool = False, **kw: object
 ) -> Shipment:
     lat, lon = point_at(miles, bearing)
     sh = make_shipment(lat=lat, lon=lon, order_type=OrderType.LTL, **kw)  # type: ignore[arg-type]
@@ -55,8 +55,7 @@ def test_two_dcs_never_share_a_load_and_start_at_07_00() -> None:
     s = _ca()
     ships = [_ship(15, 30 * i, address=f"{i} Rialto Rd", volume=60) for i in range(5)]
     ships += [
-        _ship(15, 30 * i + 15, site="FONTANA", address=f"{i} Fontana Rd", volume=60)
-        for i in range(5)
+        _ship(15, 30 * i + 15, site="LGC8", address=f"{i} Fontana Rd", volume=60) for i in range(5)
     ]
     stops = _stops(ships, s)
     by_id = {x.stop_id: x for x in stops}
@@ -124,7 +123,7 @@ def test_validator_flags_ca_rule_breaks() -> None:
         _ship(10, 0, address="1 A St", volume=100),
         _ship(10, 180, address="2 B St", volume=100),
     ]
-    ships.append(_ship(12, 90, site="FONTANA", address="3 C St", volume=100))
+    ships.append(_ship(12, 90, site="LGC8", address="3 C St", volume=100))
     stops = _stops(ships, s)
     res = _run(stops, s)
     plan = res.plan.model_copy(deep=True)
@@ -133,7 +132,7 @@ def test_validator_flags_ca_rule_breaks() -> None:
     from routeopt.solver.extract import rebuild_plan_trucks
 
     load_ids = [[v.stop_id for v in ld.stops] for ld in truck.loads if ld.stops]
-    fontana = next(x.stop_id for x in stops if x.site == "FONTANA")
+    fontana = next(x.stop_id for x in stops if x.site == "LGC8")
     rialto_load = next(ld for ld in load_ids if fontana not in ld)
     for ld in load_ids:
         if fontana in ld:
@@ -189,17 +188,47 @@ def test_ca_upload_columns() -> None:
     assert "Unknown DC" in by_row[4] and "Y / N" in by_row[5] and "less than 400" in by_row[6]
     a, b, ha, ac = res.shipments
     assert not ha.pallet_required and ac.pallet_required  # HA: no pallet; others: pallet
-    assert (a.site, a.pallet_required, a.priority) == ("FONTANA", True, 1)
-    assert (b.site, b.origin_dc, b.priority) == ("RIALTO", "LGC7", 2)
+    assert (a.site, a.pallet_required, a.priority) == ("LGC8", True, 1)
+    assert (b.site, b.origin_dc, b.priority) == ("LGC7", "LGC7", 2)
     assert a.shipment_type.value == "LMD" and a.weight_lb == 0 and a.pieces == 1
     stops = consolidate([a, b], s).stops
     by_site = {x.site: x for x in stops}
-    assert by_site["FONTANA"].tier == 1 and by_site["FONTANA"].pallet
-    assert by_site["FONTANA"].contact == "Ana 714-555-0101"
-    assert by_site["RIALTO"].tier == 2 and by_site["RIALTO"].contact == LOOK_UP_CONTACT
+    assert by_site["LGC8"].tier == 1 and by_site["LGC8"].pallet
+    assert by_site["LGC8"].contact == "Ana 714-555-0101"
+    assert by_site["LGC7"].tier == 2 and by_site["LGC7"].contact == LOOK_UP_CONTACT
     assert all(x.day_tag == DayTag.D for x in stops)
 
 
 def test_ca_profile_rejects_pull_forward_free_settings_roundtrip() -> None:
     s = _ca(shift_start=dt.time(6, 30))
     assert s.shift_start == dt.time(6, 30) and s.first_load_minutes == 60
+
+
+def test_lgc2_and_lgc7_are_separate_dcs_at_one_address() -> None:
+    s = _ca()
+    ships = [_ship(12, 40 * i, address=f"{i} Two Rd", volume=60) for i in range(4)]
+    ships += [
+        _ship(12, 40 * i + 20, site="LGC7", address=f"{i} Seven Rd", volume=60) for i in range(4)
+    ]
+    ships.append(_ship(12, 0, site="LGC7", address="0 Two Rd", volume=60))  # same address, other DC
+    stops = _stops(ships, s)
+    by_id = {x.stop_id: x for x in stops}
+    assert len(stops) == 9  # one address served from LGC2 and from LGC7 is two stops
+    res = _run(stops, s)
+    assert not res.plan.hard_violations
+    for _truck, load in _loads(res):
+        assert {by_id[v.stop_id].site for v in load.stops} == {load.site}
+
+
+def test_saved_runs_with_old_site_codes_still_load() -> None:
+    from routeopt.domain import Load, Shipment
+
+    old = make_shipment().model_dump()
+    old["site"] = "RIALTO"
+    assert Shipment.model_validate(old).site == "LGC2"
+    assert (
+        Load(
+            seq=1, depart_s=0, return_s=0, load_out_volume=0, max_volume_on_road=0, site="FONTANA"
+        ).site
+        == "LGC8"
+    )

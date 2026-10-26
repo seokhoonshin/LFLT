@@ -7,7 +7,7 @@
    - LGC8: 5267 Sierra Ave, Fontana, CA 92336
    - LGC2: 5550 Mango Ave, Rialto, CA 92377
    - LGC7: 5550 Mango Ave, Rialto, CA 92377
-3. LGC2 and LGC7 share one address and are treated as a single site
+3. LGC2 and LGC7 share one address but are separate DCs: a load is picked up at one DC only (switching between LGC2 and LGC7 for a second turn needs no driving)
 4. Truck capacity: less than 800 cu ft
 5. Shipments that require a pallet (every product group except HA: AC, ES, BS, MS, ...): less than 400 cu ft
 6. Shipments that do not require a pallet (HA): less than 800 cu ft

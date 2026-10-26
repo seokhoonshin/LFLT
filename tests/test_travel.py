@@ -117,7 +117,8 @@ def test_osrm_matrix_single_request_and_health() -> None:
     m = p.matrix(coords)
     assert m.source == "osrm" and m.n == N_DEPOTS + 5
     assert all(m.durations_s[i][i] == 0 for i in range(m.n))
-    assert m.durations_s[0][1] > 0 and m.distances_m[0][1] > 0
+    first = N_DEPOTS  # LGC2 and LGC7 share a point: compare the hub with the first stop
+    assert m.durations_s[0][first] > 0 and m.distances_m[0][first] > 0
     table_calls = [c for c in calls if c.url.path.startswith("/table/")]
     assert len(table_calls) == 1
     assert table_calls[0].url.params["annotations"] == "duration,distance"
@@ -171,7 +172,7 @@ def test_travel_cache_is_order_independent() -> None:
     cache.put(m)
     hit = cache.get("haversine", coords)
     assert hit is not None and hit.durations_s == m.durations_s and hit.coords == m.coords
-    order = (3, 0, 5, 4, 1, 2)
+    order = (3, 0, 6, 5, 4, 1, 2)
     permuted = [coords[i] for i in order]
     hit2 = cache.get("haversine", permuted)
     assert hit2 is not None

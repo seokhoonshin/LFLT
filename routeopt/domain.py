@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 log = logging.getLogger(__name__)
 
@@ -44,12 +44,15 @@ class Site:
     dc_codes: tuple[str, ...]
 
 
-# CA LFLT: LGC2 and LGC7 share 5550 Mango Ave (one site); LGC8 is 5267 Sierra Ave, Fontana
-# (OpenStreetMap house-number point).  The first site is the default for rows without a DC.
+# CA LFLT: LGC2 and LGC7 are two DCs at one address (5550 Mango Ave, Rialto) - a load is
+# picked up at one DC only, and moving between them for a second turn takes no driving.
+# LGC8 is 5267 Sierra Ave, Fontana (OpenStreetMap house-number point).  The first site is
+# the default for rows without a DC.
 SITES: tuple[Site, ...] = (
-    Site("RIALTO", "LGC2/LGC7", HUB_ADDRESS, HUB_LAT, HUB_LON, ("LGC2", "LGC7")),
+    Site("LGC2", "LGC2", HUB_ADDRESS, HUB_LAT, HUB_LON, ("LGC2",)),
+    Site("LGC7", "LGC7", HUB_ADDRESS, HUB_LAT, HUB_LON, ("LGC7",)),
     Site(
-        "FONTANA",
+        "LGC8",
         "LGC8",
         "5267 Sierra Ave, Fontana, CA 92336",
         34.1441316,
@@ -62,13 +65,19 @@ N_DEPOTS = len(SITES)
 SITE_NODE: dict[str, int] = {s.code: i for i, s in enumerate(SITES)}
 SITE_BY_CODE: dict[str, Site] = {s.code: s for s in SITES}
 DC_TO_SITE: dict[str, str] = {dc: s.code for s in SITES for dc in s.dc_codes}
+# site codes of runs saved when LGC2 and LGC7 were one site
+LEGACY_SITE_CODES: dict[str, str] = {"RIALTO": "LGC2", "FONTANA": "LGC8"}
 
 
 def site_for_dc(dc: str | None) -> str | None:
-    """Site code for a DC code (LGC2/LGC7 -> RIALTO, LGC8 -> FONTANA); None if unknown."""
+    """Site code for a DC code (LGC2, LGC7, LGC8); None if unknown."""
     if not dc:
         return DEFAULT_SITE
     return DC_TO_SITE.get(dc.strip().upper())
+
+
+def normalize_site(code: str) -> str:
+    return LEGACY_SITE_CODES.get(code, code)
 
 
 def hub_now() -> dt.datetime:
@@ -154,6 +163,11 @@ class Shipment(BaseModel):
     pallet_required: bool = False
     priority: int | None = None  # CA: 1 existing LFLT, 2 add-on, 3 low
 
+    @field_validator("site")
+    @classmethod
+    def _known_site(cls, v: str) -> str:
+        return normalize_site(v)
+
     @property
     def delivery_volume(self) -> float:
         return self.volume_cuft if self.shipment_type == ShipmentType.LMD else 0.0
@@ -201,6 +215,11 @@ class Stop(BaseModel):
     site: str = DEFAULT_SITE
     pallet: bool = False  # any shipment needs a pallet -> the load uses the pallet limit
     contact: str = ""  # appointment contact (Memo Text first, else look up by address)
+
+    @field_validator("site")
+    @classmethod
+    def _known_site(cls, v: str) -> str:
+        return normalize_site(v)
 
     @property
     def customer_label(self) -> str:
@@ -288,6 +307,11 @@ class Load(BaseModel):
     deadhead_minutes: float = 0.0  # DC-to-DC drive before this load (turn at another site)
     one_way_miles: float = 0.0  # DC to the last stop
     last_delivery_s: int | None = None  # departure from the last stop
+
+    @field_validator("site")
+    @classmethod
+    def _known_site(cls, v: str) -> str:
+        return normalize_site(v)
 
     @property
     def stop_ids(self) -> list[str]:

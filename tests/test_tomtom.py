@@ -61,7 +61,7 @@ def _provider(calls: list[dict], **kw) -> TomTomProvider:  # type: ignore[no-unt
 
 def test_request_shape_and_chunking() -> None:
     calls: list[dict] = []
-    coords = node_coords(make_stops(4))  # 2 depots + 4 stops = 6 nodes
+    coords = node_coords(make_stops(3))  # 3 depots + 3 stops = 6 nodes
     m = _provider(calls, max_cells=9).matrix(coords)  # blocks of 3 x 3
     assert len(calls) == 4 and m.n == 6 and m.source.startswith("tomtom:")
     assert all(m.durations_s[i][i] == 0 for i in range(6))
@@ -82,7 +82,7 @@ def test_unroutable_cells_are_estimated() -> None:
     lat = [round(c[0], 6) for c in coords]
     m = _provider(calls, skip={(lat[2], lat[3])}).matrix(coords)
     est = HaversineProvider().matrix(coords)
-    assert m.durations_s[2][3] == est.durations_s[2][3]
+    assert m.durations_s[2][3] == est.durations_s[2][3]  # LGC8 -> first stop
     assert any("could not route" in n for n in m.notes)
 
 

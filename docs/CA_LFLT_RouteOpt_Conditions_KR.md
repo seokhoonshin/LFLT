@@ -7,7 +7,7 @@
    - LGC8: 5267 Sierra Ave, Fontana, CA 92336
    - LGC2: 5550 Mango Ave, Rialto, CA 92377
    - LGC7: 5550 Mango Ave, Rialto, CA 92377
-3. LGC2와 LGC7은 같은 주소라 한 사이트로 취급
+3. LGC2와 LGC7은 주소는 같지만 서로 다른 DC: 한 로드는 한 DC에서만 픽업 (투턴으로 LGC2↔LGC7 바꿀 때 이동시간은 0)
 4. 트럭 용량: 800 cuft 미만
 5. 팔레트가 필요한 건 (HA 제외 전부: AC, ES, BS, MS, …): 400 cuft 미만
 6. 팔레트 불필요 건 (HA): 800 cuft 미만
