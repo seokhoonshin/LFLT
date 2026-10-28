@@ -114,7 +114,8 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
     n_vehicles = len(slots)
     # Solver time 0 = settings.model_origin_s.  With a floating start (CA) that is the
     # earliest possible driver start; each truck's start is a variable, its day is capped
-    # at on_duty from that start, and starting before shift_start (offset) costs a little.
+    # at on_duty from that start, and a first stop reached after the appointment costs
+    # late_first_stop_cost per second (so near first stops are preferred).
     offset = settings.model_offset_s
     first_rel = settings.earliest_delivery_rel_s
     floating = settings.floating
@@ -162,6 +163,21 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
 
     travel_cb = routing.RegisterTransitMatrix(travel)
     routing.SetArcCostEvaluatorOfAllVehicles(travel_cb)
+    if settings.floating and settings.late_first_stop_cost:
+        # load 1 leaves at start + first loading and the start never precedes time 0 (the
+        # DC opening): a first stop farther than appointment - loading - start-at-0 is
+        # reached late.  Charge that lateness on the DC -> first-stop arc of load 1.
+        slack_to_appt = settings.model_offset_s + settings.earliest_delivery_rel_s
+        slack_to_appt -= settings.first_load_seconds
+        first_cost = [row[:] for row in travel]
+        for d in range(n_dep):
+            for j in range(n_dep, n_nodes):
+                late = max(0, travel[d][j] - slack_to_appt)
+                first_cost[d][j] += settings.late_first_stop_cost * late
+        first_cb = routing.RegisterTransitMatrix(first_cost)
+        for s in slots:
+            if s.slot == 1:
+                routing.SetArcCostEvaluatorOfVehicle(first_cb, s.vehicle)
     cb_slot1 = routing.RegisterTransitMatrix(time_slot1)
     cb_slotk = routing.RegisterTransitMatrix(time_slotk)
     time_cbs = [cb_slot1 if s.slot == 1 else cb_slotk for s in slots]
@@ -222,10 +238,6 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
                         time_dim.CumulVar(routing.End(s.vehicle))
                         <= day_start + settings.on_duty_seconds
                     )
-            if offset and settings.early_start_cost:
-                time_dim.SetCumulVarSoftLowerBound(
-                    routing.Start(firsts[0]), offset, settings.early_start_cost
-                )
         # The driver starts exactly so the first stop is reached at the first appointment:
         # start = appointment - first loading - drive to that stop (never before time 0,
         # the earliest start).  No waiting on the first arc, and the start is capped by the

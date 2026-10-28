@@ -437,13 +437,13 @@ with st.expander("Advanced settings", expanded=False):
         disabled=not floating_start,
         help=TIP["earliest_shift_start"],
     )
-    early_start_cost = g4.number_input(
-        "Early-start cost (per second before Shift start)",
+    late_first_stop_cost = g4.number_input(
+        "Late first-stop cost (per second after the appointment)",
         0,
         100,
-        int(defaults.early_start_cost),
+        int(defaults.late_first_stop_cost),
         disabled=not floating_start,
-        help=TIP["early_start_cost"],
+        help=TIP["late_first_stop_cost"],
     )
     st.markdown("**TomTom** (used when Travel times = TomTom)")
     k1, k2, k3, k4 = st.columns(4)
@@ -538,7 +538,7 @@ try:
         earliest_delivery=earliest_delivery if use_first_appt else None,
         floating_start=bool(floating_start),
         earliest_shift_start=earliest_start,
-        early_start_cost=int(early_start_cost),
+        late_first_stop_cost=int(late_first_stop_cost),
         pallet_volume_cuft=float(pallet_volume) or None,
         unload_minutes_per_cuft=float(unload_rate) or None,
         max_one_way_miles=float(one_way) or None,

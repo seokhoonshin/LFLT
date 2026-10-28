@@ -35,7 +35,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "first_load_minutes": 90,
         "reload_minutes": 120,
         "floating_start": True,
-        "earliest_shift_start": dt.time(3, 0),
+        "earliest_shift_start": dt.time(6, 0),
         "earliest_delivery": dt.time(8, 0),
         "truck_volume_cuft": 800.0,
         "volume_strict": True,
@@ -131,11 +131,13 @@ class RunSettings(BaseModel):
     first_load_minutes: int = 90  # loading before the first departure (live loading)
     # CA: the driver starts so that the first stop is reached at the first appointment time
     # (start = appointment - first loading - drive to the first stop) and works on_duty_hours
-    # from there.  shift_start is the preferred earliest start: starting before it is
-    # allowed down to earliest_shift_start but costs early_start_cost per second.
+    # from there - but never before earliest_shift_start (the DC opens then; CA 06:00), so
+    # a far first stop is reached after the appointment.  Each second a load-1 first stop
+    # is reached after the appointment costs late_first_stop_cost: first stops reachable
+    # by the appointment are preferred.
     floating_start: bool = True
-    earliest_shift_start: dt.time = dt.time(3, 0)
-    early_start_cost: int = 2
+    earliest_shift_start: dt.time = dt.time(6, 0)
+    late_first_stop_cost: int = 2
     earliest_delivery: dt.time | None = dt.time(8, 0)  # first appointment; early trucks wait
     on_duty_hours: float = 10.0
     truck_volume_cuft: float = 800.0
@@ -505,10 +507,13 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "drive to the first stop, and the on-duty hours count from that start "
         "(e.g. 06:00-16:00, or 08:00-18:00)."
     ),
-    "earliest_shift_start": "Earliest a driver may start when the start floats (a far first stop).",
-    "early_start_cost": (
-        "Cost per second of starting before Shift start: higher = prefer first stops that "
-        "can be reached by the first appointment from a Shift-start start."
+    "earliest_shift_start": (
+        "Earliest a driver may start (the DC opens). A far first stop is then reached later "
+        "than the first appointment: start + first loading + drive."
+    ),
+    "late_first_stop_cost": (
+        "Cost per second a truck's first stop is reached after the first appointment "
+        "(a far first stop): higher = prefer first stops reachable by the appointment."
     ),
     "earliest_delivery": "First customer appointment; a truck that arrives earlier waits.",
     "volume_strict": "Volume must stay below the cap (not equal to it).",

@@ -84,8 +84,8 @@ def truck_start(
 
     Fixed at ``shift_start`` unless the start floats: then the truck reaches its first stop
     at the first appointment time, i.e. start = appointment - first loading - drive to the
-    first stop, never before ``earliest_shift_start`` (a far first stop is then reached
-    later).
+    first stop, never before ``earliest_shift_start`` (the DC opens; a far first stop is
+    then reached later than the appointment).
     """
     if not settings.floating or not loads or not loads[0]:
         return settings.shift_start_s

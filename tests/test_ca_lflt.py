@@ -250,3 +250,17 @@ def test_driver_start_follows_the_first_stop_and_prefers_a_near_one() -> None:
     # start = 08:00 - 90 min loading - drive to the near stop: after 06:00
     assert 6 * 3600 <= truck.start_s < 6.5 * 3600
     assert abs(truck.on_duty_minutes - (truck.loads[-1].return_s - truck.start_s) / 60) < 0.1
+
+
+def test_driver_never_starts_before_the_dc_opens() -> None:
+    s = _ca()
+    stops = _stops([_ship(60, 90, address="2 Far Rd")], s)
+    res = _run(stops, s, trucks=1)
+    assert not res.plan.violations
+    truck = res.plan.used_trucks[0]
+    load = truck.loads[0]
+    assert truck.start_s == 6 * 3600  # DC opens at 06:00
+    assert load.depart_s == 7 * 3600 + 30 * 60  # + 90 min loading
+    assert load.stops[0].arrive_s == load.depart_s + round(load.stops[0].travel_min_from_prev * 60)
+    assert load.stops[0].arrive_s > 8 * 3600
+    assert load.return_s - truck.start_s <= 10 * 3600
