@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from routeopt.config import AppConfig, RunSettings
-from routeopt.domain import HUB_TIMEZONE
+from routeopt.domain import HUB_TIMEZONE, N_DEPOTS
 from routeopt.travel import node_coords, planning_matrix, select_provider
 from routeopt.travel.haversine import HaversineProvider
 from routeopt.travel.tomtom import TomTomProvider, TruckProfile, departure, is_road_source
@@ -117,8 +117,14 @@ def test_traffic_factor_is_not_applied_to_tomtom_times() -> None:
     calls: list[dict] = []
     coords = node_coords(make_stops(2))
     m = _provider(calls).matrix(coords)
-    planned = planning_matrix(m, RunSettings(plan_date=PLAN_DATE))  # CA: x 1.3 for OSRM only
-    assert planned.durations_s == m.durations_s
+    s = RunSettings(plan_date=PLAN_DATE, stop_transit_minutes=0)  # CA: x 1.3 for OSRM only
+    assert planning_matrix(m, s).durations_s == m.durations_s
+    # stops in transit: 20 min on every stop-to-stop drive, none from or back to a depot
+    planned = planning_matrix(m, RunSettings(plan_date=PLAN_DATE))
+    first = N_DEPOTS
+    assert planned.durations_s[first][first + 1] == m.durations_s[first][first + 1] + 1200
+    assert planned.durations_s[0][first] == m.durations_s[0][first]
+    assert planned.durations_s[first][0] == m.durations_s[first][0]
 
 
 def test_large_matrix_and_rate_limit() -> None:

@@ -18,8 +18,8 @@
 8. Maximum on-duty time is 10 hours from the driver's start, including loading and the return to the DC (e.g. 06:00-16:00, or 08:00-18:00)
 9. Driver start = first delivery time (08:00) - 90 minutes of morning loading - drive from the DC to the first stop. The DC opens at 06:00, so the driver never starts earlier: for a far first stop the driver starts at 06:00, departs at 07:30 and arrives after the drive (after 08:00)
 10. The first delivery is at 08:00 or later
-11. Stop time: 20 minutes per stop
-12. Unloading time: cu ft × 0.1 minutes
+11. Stops in transit: 20 minutes added to every drive between two stops (Advanced settings "Stops in transit")
+12. Unloading (service) time: shipment cu ft × 0.1 minutes, summed per stop
 13. Lunch: 30 minutes, between 11:00 and 14:00
 
 ## Distance

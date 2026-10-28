@@ -65,6 +65,20 @@ class Matrix(BaseModel):
         )
         return self.model_copy(update={"durations_s": durations, "notes": [*self.notes, note]})
 
+    def with_stop_transit(self, seconds: int, first_stop: int = 1) -> Matrix:
+        """Copy where every drive between two different stops (nodes from ``first_stop`` on)
+        takes ``seconds`` longer - the "stops in transit" allowance.  Drives from or back to
+        a depot are unchanged."""
+        if seconds <= 0:
+            return self
+        durations = [row[:] for row in self.durations_s]
+        for i in range(first_stop, self.n):
+            for j in range(first_stop, self.n):
+                if i != j:
+                    durations[i][j] += seconds
+        note = f"{seconds // 60} min added to every drive between two stops (stops in transit)."
+        return self.model_copy(update={"durations_s": durations, "notes": [*self.notes, note]})
+
     def submatrix(self, index: list[int]) -> Matrix:
         """Matrix restricted / re-ordered to the given node indices."""
         return Matrix(

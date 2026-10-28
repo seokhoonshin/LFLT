@@ -524,7 +524,7 @@ with st.expander("Advanced settings", expanded=False):
         disabled=not use_tomtom,
         help=TIP["truck_dimensions"],
     )
-    j1, j2, j3, _j4 = st.columns(4)
+    j1, j2, j3, j4 = st.columns(4)
     geocode_mode = j1.selectbox(
         dl("Stop locations", "geocode_mode"),
         ["address", "fill"],
@@ -549,6 +549,13 @@ with st.expander("Advanced settings", expanded=False):
         float(defaults.traffic_factor),
         0.05,
         help=TIP["traffic_factor"],
+    )
+    stop_transit = j4.number_input(
+        dl("Stops in transit (min)", "stop_transit_minutes"),
+        0,
+        120,
+        int(defaults.stop_transit_minutes),
+        help=TIP["stop_transit_minutes"],
     )
 
 try:
@@ -590,6 +597,7 @@ try:
         obs_radius_miles=float(obs_radius),
         geocode_mode=geocode_mode,  # type: ignore[arg-type]
         same_location_travel_minutes=int(same_location_minutes),
+        stop_transit_minutes=int(stop_transit),
         traffic_factor=float(traffic_factor),
         traffic_depart_time=traffic_depart,
         truck_length_ft=float(truck_length),

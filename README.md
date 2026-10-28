@@ -15,7 +15,7 @@ at one DC only under the rules in
 ([Korean](docs/CA_LFLT_RouteOpt_Conditions_KR.md)): 06:00 start with 60 min loading,
 first appointment 08:00, less than 800 cu ft per load (less than 400 when any shipment
 needs a pallet: every product group except HA),
-20 min per stop + 0.1 min per cu ft, less than 200 mi one way (150-200 mi flagged for a
+0.1 min per cu ft at each stop + 20 min on every stop-to-stop drive, less than 200 mi one way (150-200 mi flagged for a
 carrier check), two turns with less than 300 mi in total and at least 3 h between the
 first turn's last delivery and the second turn's departure, lunch 30 min between 11:00
 and 14:00.  OBS-only stops can be excluded or added last, only next to planned stops.
@@ -202,7 +202,8 @@ Rows sharing an address (+ zip) become one **stop**, always served together by o
 | On-duty hours | 10 | shift start → return of the last load, incl. driving, service, buffer, reloads and lunch |
 | Truck volume | 600 cu ft | never exceeded at any point (deliveries leave, returns board) |
 | Weight / pieces cap | off | optional hard caps; always reported |
-| Stop buffer | 20 min | once per stop |
+| Stop buffer | 20 min (CA: 0) | once per stop |
+| Stops in transit | CA: 20 min | added to every stop-to-stop drive |
 | Reload | 60 min | between loads of the same truck (unload returns, load the next set) |
 | Lunch | 30 min | during a reload when the truck has 2+ loads, otherwise an explicit gap |
 | Lunch window | 11:00–14:00 start | preferred window for the gap; clear for "any time" |

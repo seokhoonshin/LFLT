@@ -48,7 +48,7 @@ def _loads(res: OptimizeResult):  # type: ignore[no-untyped-def]
 def test_unloading_minutes_come_from_volume() -> None:
     s = _ca()
     stops = _stops([_ship(10, 0, address="1 A St", volume=46.3, service=99)], s)
-    assert stops[0].service_total_minutes == 20 + 5  # 20 min stop + 46.3 x 0.1 rounded
+    assert stops[0].service_total_minutes == 5  # 46.3 x 0.1 rounded; no stop buffer in CA
 
 
 def test_two_dcs_never_share_a_load_and_the_driver_start_floats() -> None:

@@ -52,6 +52,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "trucks_selected": ["T01", "T02"],
         "geocode_mode": "address",
         "same_location_travel_minutes": 15,
+        "stop_transit_minutes": 20,
+        "stop_buffer_minutes": 0,
         "traffic_factor": 1.3,
     },
     "legacy": {
@@ -76,6 +78,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "trucks_selected": [],
         "geocode_mode": "fill",
         "same_location_travel_minutes": 0,
+        "stop_transit_minutes": 0,
+        "stop_buffer_minutes": 20,
         "traffic_factor": 1.0,
     },
 }
@@ -168,6 +172,7 @@ class RunSettings(BaseModel):
     obs_radius_miles: float = 5.0
     geocode_mode: GeocodeMode = "address"
     same_location_travel_minutes: int = 15
+    stop_transit_minutes: int = 20  # added to every stop-to-stop drive
     traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
     traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
     truck_length_ft: float = 26.0  # TomTom truck routing
@@ -518,7 +523,9 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "earliest_delivery": "First customer appointment; a truck that arrives earlier waits.",
     "volume_strict": "Volume must stay below the cap (not equal to it).",
     "pallet_volume_cuft": "Volume limit of a load carrying any shipment that needs a pallet.",
-    "unload_minutes_per_cuft": "Unloading minutes per cubic foot (added to the stop buffer).",
+    "unload_minutes_per_cuft": (
+        "Unloading minutes per cubic foot: a stop's service time = its shipments' volume x this rate."
+    ),
     "max_one_way_miles": "One-way limit: miles from the DC to a load's last stop.",
     "carrier_check_miles": "Loads farther than this one way are flagged: confirm with the carrier.",
     "two_turn_max_miles": "Total miles of all turns of a truck that runs a second turn.",
@@ -548,6 +555,10 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "traffic_factor": (
         "OSRM road times assume empty roads; they are multiplied by this for daytime "
         "traffic (distances are not changed). Straight-line estimates are not scaled."
+    ),
+    "stop_transit_minutes": (
+        "Stops in transit: minutes added to every drive between two stops (not to the drive "
+        "from or back to the DC). Unloading time is separate: stop volume x unloading rate."
     ),
     "same_location_travel_minutes": (
         "Minimum driving minutes between two different stops that sit on the same point "

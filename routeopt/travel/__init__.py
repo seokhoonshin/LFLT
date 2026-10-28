@@ -87,13 +87,15 @@ def select_provider(
 
 def planning_matrix(matrix: Matrix, settings: RunSettings) -> Matrix:
     """The times a plan is built and checked on: OSRM free-flow times x the traffic factor,
-    and a floor between two different stops on the same point.  Applied on top of the raw
-    provider matrix every time (the cache only ever holds raw matrices)."""
+    a floor between two different stops on the same point, then the stops-in-transit
+    minutes on every stop-to-stop drive.  Applied on top of the raw provider matrix every
+    time (the cache only ever holds raw matrices)."""
     if matrix.source == "osrm":
         matrix = matrix.with_traffic_factor(settings.traffic_factor)
-    return matrix.with_same_location_floor(
+    matrix = matrix.with_same_location_floor(
         settings.same_location_travel_minutes * 60, first_stop=N_DEPOTS
     )
+    return matrix.with_stop_transit(settings.stop_transit_minutes * 60, first_stop=N_DEPOTS)
 
 
 def node_coords(stops: list[Stop]) -> list[Coord]:

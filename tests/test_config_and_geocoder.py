@@ -53,7 +53,7 @@ def test_ca_lflt_profile_defaults() -> None:
     assert s.reload_minutes == 120 and s.floating and s.earliest_shift_start == dt.time(6, 0)
     assert s.model_origin_s == 6 * 3600 and s.model_offset_s == 0
     assert s.earliest_delivery == dt.time(8, 0) and s.earliest_delivery_rel_s == 2 * 3600
-    assert s.on_duty_hours == 10 and s.stop_buffer_minutes == 20
+    assert s.on_duty_hours == 10 and s.stop_buffer_minutes == 0 and s.stop_transit_minutes == 20
     assert s.truck_volume_cuft == 800 and s.volume_strict and s.volume_cap_tenths == 7999
     assert s.pallet_volume_cuft == 400 and s.pallet_cap_tenths == 3999
     assert s.volume_exceeds(800) and not s.volume_exceeds(799.9)
