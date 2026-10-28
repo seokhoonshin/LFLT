@@ -237,7 +237,19 @@ def validate_rows(
     for raw in rows:
         n = raw.row_number
         if n in exclude_rows:
-            excluded.append(RowIssue(n, "Excluded by the planner.", "warning"))
+            addr = ", ".join(
+                str(raw.get(k)).strip() for k in ("address", "city", "zip") if raw.get(k)
+            )
+            excluded.append(
+                RowIssue(
+                    n,
+                    f"Skipped: you chose to exclude it (address could not be placed: {addr}). "
+                    "Fix the address or add latitude/longitude and upload the file again.",
+                    "warning",
+                    shipment_id=str(raw.get("shipment_id") or "") or None,
+                    field="address",
+                )
+            )
             continue
         row_errors: list[RowIssue] = []
 
