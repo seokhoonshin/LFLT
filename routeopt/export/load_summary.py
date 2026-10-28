@@ -120,7 +120,14 @@ def export_load_summary_pdf(
     path = out_dir / (export_filename(plan, "_load_summary") + ".pdf")
     styles = getSampleStyleSheet()
     cell = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=7, leading=8.5)
-    head = ParagraphStyle("head", parent=cell, fontName="Helvetica-Bold", textColor=colors.white)
+    head = ParagraphStyle(
+        "head",
+        parent=cell,
+        fontName="Helvetica-Bold",
+        fontSize=6,
+        leading=7.5,
+        textColor=colors.white,
+    )
 
     def p(text: str, style: ParagraphStyle = cell) -> Paragraph:
         return Paragraph(text.replace("&", "&amp;").replace("<", "&lt;"), style)
@@ -128,31 +135,20 @@ def export_load_summary_pdf(
     data: list[list[Any]] = [[p(c, head) for c in COLUMNS]]
     for row in load_summary_rows(plan, stops, settings):
         data.append([p(_text(row[c])) for c in COLUMNS])
-    widths = [
-        0.55,
-        0.45,
-        1.3,
-        1.05,
-        1.2,
-        0.45,
-        0.5,
-        0.8,
-        0.85,
-        0.85,
-        0.55,
-        0.55,
-        0.6,
-        0.6,
-        0.55,
-        0.45,
-    ]
-    table = Table(data, colWidths=[w * inch for w in widths], repeatRows=1)
+    # inches; headers at 6 pt fit on one line, and the row fits landscape letter
+    widths = [0.45, 0.5, 1.2, 1.0, 1.1, 0.4, 0.45, 0.7, 0.85, 0.85, 0.45, 0.55, 0.5, 0.55, 0.5, 0.4]
+    margin = 0.25 * inch
+    usable = landscape(letter)[0] - 2 * margin
+    scale = min(1.0, usable / (sum(widths) * inch))
+    table = Table(data, colWidths=[w * inch * scale for w in widths], repeatRows=1)
     table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F3864")),
                 ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#999999")),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F2F2")]),
             ]
         )
@@ -165,8 +161,8 @@ def export_load_summary_pdf(
     doc = SimpleDocTemplate(
         str(path),
         pagesize=landscape(letter),
-        leftMargin=0.3 * inch,
-        rightMargin=0.3 * inch,
+        leftMargin=margin,
+        rightMargin=margin,
         topMargin=0.4 * inch,
         bottomMargin=0.4 * inch,
     )
