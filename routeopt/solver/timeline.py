@@ -271,6 +271,8 @@ def build_truck(
                     else f"after stop {k - 1} of load {load_idx}"
                 )
             arrive = wait_for_appointment(arrive, settings)
+            # the stops-in-transit allowance is inside the stop-to-stop matrix time
+            transit = min(travel, settings.stop_transit_minutes * 60) if k > 1 else 0
             depart_stop = arrive + stop.service_total_minutes * 60
             vol_arr, wt_arr, pcs_arr = vol, wt, pcs
             vol = vol - stop.delivery_volume + stop.pickup_volume
@@ -287,7 +289,8 @@ def build_truck(
                     stop_id=stop.stop_id,
                     arrive_s=arrive,
                     depart_s=depart_stop,
-                    travel_min_from_prev=round(travel / 60, 1),
+                    travel_min_from_prev=round((travel - transit) / 60, 1),
+                    transit_min_from_prev=round(transit / 60, 1),
                     dist_mi_from_prev=round(dist / 1609.344, 1),
                     volume_on_arrival=round(vol_arr, 1),
                     volume_after=round(vol, 1),

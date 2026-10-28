@@ -53,6 +53,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "geocode_mode": "address",
         "same_location_travel_minutes": 15,
         "stop_transit_minutes": 20,
+        "volume_value_cuft": 100.0,
         "stop_buffer_minutes": 0,
         "traffic_factor": 1.3,
     },
@@ -79,6 +80,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "geocode_mode": "fill",
         "same_location_travel_minutes": 0,
         "stop_transit_minutes": 0,
+        "volume_value_cuft": None,
         "stop_buffer_minutes": 20,
         "traffic_factor": 1.0,
     },
@@ -173,6 +175,8 @@ class RunSettings(BaseModel):
     geocode_mode: GeocodeMode = "address"
     same_location_travel_minutes: int = 15
     stop_transit_minutes: int = 20  # added to every stop-to-stop drive
+    # priority 2/3 stop value = one stop + its volume / this many cu ft (None = count only)
+    volume_value_cuft: float | None = 100.0
     traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
     traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
     truck_length_ft: float = 26.0  # TomTom truck routing
@@ -395,6 +399,19 @@ class RunSettings(BaseModel):
         )
         return int(minutes_value * 60 * (1 + self.effective_span_cost_coefficient))
 
+    def stop_penalty(self, tier: int, volume: float) -> int:
+        """Drop penalty for one stop.  With a volume value, a priority 2/3 (tier 2/3) stop
+        is worth one stop plus its volume / ``volume_value_cuft`` stops, so a planner short
+        of trucks keeps both many stops and much volume.  Tier 1 is raised by the largest
+        possible volume so it still outranks any tier 2 stop."""
+        base = self.penalty_for_tier(tier)
+        per = self.volume_value_cuft
+        if not per or tier > 3:
+            return base
+        if tier == 1:
+            return int(base * (1 + self.truck_volume_cuft / per))
+        return int(base * (1 + max(0.0, volume) / per))
+
     def pull_forward_offsets(self) -> list[int]:
         return list(self.pull_forward_days)
 
@@ -555,6 +572,11 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "traffic_factor": (
         "OSRM road times assume empty roads; they are multiplied by this for daytime "
         "traffic (distances are not changed). Straight-line estimates are not scaled."
+    ),
+    "volume_value_cuft": (
+        "Priority 2 stop value: each stop counts as 1 + its volume / this many cu ft "
+        "(100 = a 300 cu ft stop is worth 4 small stops). Raises both stops and volume when "
+        "there are more candidates than trucks. 0 = count stops only."
     ),
     "stop_transit_minutes": (
         "Stops in transit: minutes added to every drive between two stops (not to the drive "

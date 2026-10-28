@@ -361,7 +361,7 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
     # ---- tiers / disjunctions --------------------------------------------------------
     penalties: list[int] = []
     for i, stop in enumerate(stops, start=n_dep):
-        penalty = settings.penalty_for_tier(stop.tier)
+        penalty = settings.stop_penalty(stop.tier, stop.delivery_volume)
         penalties.append(penalty)
         routing.AddDisjunction([manager.NodeToIndex(i)], penalty)
 

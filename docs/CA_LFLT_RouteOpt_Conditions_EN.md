@@ -48,6 +48,7 @@
 26. Orders closest to the DC first
 27. It should be possible to run the optimization both with and without GRND
 28. When GRND is included, GRND has the lowest priority
+28a. Priority 2 stops are valued by stops and volume: each stop counts as 1 + its cu ft / 100 (Advanced settings "Volume value"), so when trucks are short the plan keeps both many stops and much volume. Priority 1 (existing LFLT loads) always comes first.
     1. Optimize everything except GRND first
     2. Then insert GRND only into the remaining time and capacity
     3. Add a GRND shipment only if it is within 5 miles of a stop that is already assigned

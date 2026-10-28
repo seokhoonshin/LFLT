@@ -275,7 +275,7 @@ class StopVisit(BaseModel):
     stop_id: str
     arrive_s: int
     depart_s: int
-    travel_min_from_prev: float
+    travel_min_from_prev: float  # driving only
     dist_mi_from_prev: float
     volume_on_arrival: float
     volume_after: float
@@ -286,6 +286,7 @@ class StopVisit(BaseModel):
     eta_window_start_s: int
     eta_window_end_s: int
     lunch_before: bool = False  # lunch taken on the way to this stop
+    transit_min_from_prev: float = 0.0  # stops-in-transit minutes on the drive from a stop
     solver_arrive_s: int | None = None  # solver's own cumul (for drift checks)
 
 

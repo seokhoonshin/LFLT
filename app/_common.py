@@ -155,6 +155,7 @@ def load_table(
                 if s
                 else "",
                 "Drive min": v.travel_min_from_prev,
+                "Stop transit min": v.transit_min_from_prev,
                 "Miles from prev": v.dist_mi_from_prev,
                 "Service min": s.service_total_minutes if s else "",
                 "Depart": clock(v.depart_s),

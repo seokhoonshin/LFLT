@@ -264,3 +264,39 @@ def test_driver_never_starts_before_the_dc_opens() -> None:
     assert load.stops[0].arrive_s == load.depart_s + round(load.stops[0].travel_min_from_prev * 60)
     assert load.stops[0].arrive_s > 8 * 3600
     assert load.return_s - truck.start_s <= 10 * 3600
+
+
+def test_volume_value_keeps_the_big_stop_when_trucks_are_short() -> None:
+    # one truck, one load: the 700 cu ft stop and three 60 cu ft stops cannot all fit
+    ships = [_ship(20, 0, address="1 Big Rd", volume=700)]
+    ships += [_ship(20, 90 + 20 * i, address=f"{i} Small St", volume=60) for i in range(3)]
+
+    def served_volume(**kw: object) -> tuple[int, float]:
+        s = _ca(max_loads_per_truck=1, **kw)
+        stops = _stops(ships, s)
+        res = _run(stops, s, trucks=1)
+        by_id = {x.stop_id: x for x in stops}
+        served = res.plan.served_stop_ids
+        return len(served), sum(by_id[i].delivery_volume for i in served)
+
+    assert served_volume(volume_value_cuft=None) == (3, 180)  # count only: the small ones
+    assert served_volume() == (2, 760)  # default 100 cu ft = 1 stop: big + one small
+
+
+def test_stop_penalty_scales_priority_2_by_volume() -> None:
+    s = _ca()
+    assert s.stop_penalty(2, 300) == 4 * s.penalty_for_tier(2)
+    assert s.stop_penalty(1, 0) > s.stop_penalty(2, 800)
+    assert _ca(volume_value_cuft=None).stop_penalty(2, 300) == s.penalty_for_tier(2)
+
+
+def test_stop_transit_is_shown_apart_from_driving() -> None:
+    s = _ca()
+    ships = [_ship(10, 0, address="1 A St", volume=50), _ship(12, 10, address="2 B St", volume=50)]
+    stops = _stops(ships, s)
+    res = _run(stops, s, trucks=1)
+    visits = [v for _t, load in _loads(res) for v in load.stops]
+    assert len(visits) == 2
+    assert visits[0].transit_min_from_prev == 0
+    assert visits[1].transit_min_from_prev == 20
+    assert visits[1].depart_s - visits[1].arrive_s == 5 * 60  # service = 50 x 0.1

@@ -486,6 +486,14 @@ with st.expander("Advanced settings", expanded=False):
         disabled=not floating_start,
         help=TIP["late_first_stop_cost"],
     )
+    volume_value = g4.number_input(
+        dl("Volume value (cu ft = 1 stop)", "volume_value_cuft"),
+        0.0,
+        2000.0,
+        float(defaults.volume_value_cuft or 0.0),
+        10.0,
+        help=TIP["volume_value_cuft"],
+    )
     st.markdown("**TomTom** (used when Travel times = TomTom)")
     k1, k2, k3, k4 = st.columns(4)
     use_tomtom = travel_provider == "tomtom"
@@ -598,6 +606,7 @@ try:
         geocode_mode=geocode_mode,  # type: ignore[arg-type]
         same_location_travel_minutes=int(same_location_minutes),
         stop_transit_minutes=int(stop_transit),
+        volume_value_cuft=float(volume_value) or None,
         traffic_factor=float(traffic_factor),
         traffic_depart_time=traffic_depart,
         truck_length_ft=float(truck_length),
