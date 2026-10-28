@@ -186,10 +186,13 @@ def test_hard_errors_are_reported_per_row() -> None:
         _row(10, service_minutes=None),
         _row(11, customer_name=""),
     ]
-    res = validate_rows(rows, PLAN_DATE, make_settings())
+    res = validate_rows(rows, PLAN_DATE, make_settings(require_shipment_suffix=True))
     assert not res.ok
     by_row = {e.row: e.message for e in res.errors}
     assert "_LMD, _RTN or _INC" in by_row[2]
+    # off by default: an id without the suffix is accepted
+    plain = validate_rows([_row(2, shipment_id="SH0002")], PLAN_DATE, make_settings())
+    assert plain.ok
     assert "Unknown order type" in by_row[3]
     assert "not a date" in by_row[4]
     assert "negative" in by_row[5]

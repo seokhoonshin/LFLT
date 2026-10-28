@@ -71,7 +71,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "two_turn_max_miles": None,
         "turn_gap_minutes": 0,
         "obs_mode": "normal",
-        "require_shipment_suffix": True,
+        "require_shipment_suffix": False,
         "coverage_radius_miles": 75.0,
         "trucks_selected": [],
         "geocode_mode": "fill",
@@ -157,7 +157,7 @@ class RunSettings(BaseModel):
     carrier_check_miles: float | None = 150.0  # warn: confirm with the carrier above this
     two_turn_max_miles: float | None = 300.0  # all turns of a two-turn truck ("less than")
     turn_gap_minutes: int = 180  # a turn departs >= last delivery of the previous turn + gap
-    require_shipment_suffix: bool = False  # legacy: ids must end in _LMD/_RTN/_INC
+    require_shipment_suffix: bool = False  # on: ids must end in _LMD/_RTN/_INC
     preset: PresetName = "A"
     solve_time_seconds: int = 60
     eta_window_hours: float = 2.0

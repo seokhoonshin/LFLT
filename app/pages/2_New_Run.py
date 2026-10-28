@@ -80,9 +80,14 @@ st.caption(f"File: **{st.session_state['upload_name']}**")
 # 2. Settings
 # ---------------------------------------------------------------------------------------
 st.subheader("2 · Settings")
+# the last run's settings are reused only when they were CA LFLT runs; an older or
+# legacy save would otherwise bring back the single-hub numbers (08:00, 600 cu ft, rules off)
+last = repo.load_last_settings()
+if last is not None and last.profile != "ca_lflt":
+    last = None
 defaults: RunSettings = (
     st.session_state.get("settings_defaults")
-    or repo.load_last_settings()
+    or last
     or RunSettings(travel_provider="tomtom" if cfg.tomtom_api_key else "auto")
 )
 if "settings_defaults" not in st.session_state:
@@ -143,6 +148,23 @@ if changed:
         st.session_state.pop("ingest_cache", None)
         st.rerun()
 
+
+def dl(label: str, key: str, value: Any = None) -> str:
+    """A widget label that shows the rule set's default, e.g. "Reload (min) · default 120"."""
+    v = getattr(reference, key) if key else value
+    if v is None or v is False:
+        shown = "off"
+    elif v is True:
+        shown = "on"
+    elif isinstance(v, dt.time):
+        shown = v.strftime("%H:%M")
+    elif isinstance(v, float) and v.is_integer():
+        shown = str(int(v))
+    else:
+        shown = str(v)
+    return f"{label} · default {shown}"
+
+
 top1, top2, top3 = st.columns([1.2, 1, 1])
 preset = top1.radio(
     "Preset",
@@ -185,12 +207,19 @@ trucks_selected = st.multiselect(
 
 with st.expander("Advanced settings", expanded=False):
     a1, a2, a3, a4 = st.columns(4)
-    shift_start = a1.time_input("Shift start", value=defaults.shift_start, help=TIP["shift_start"])
+    shift_start = a1.time_input(
+        dl("Shift start", "shift_start"), value=defaults.shift_start, help=TIP["shift_start"]
+    )
     on_duty_hours = a2.number_input(
-        "On-duty hours", 1.0, 16.0, float(defaults.on_duty_hours), 0.5, help=TIP["on_duty_hours"]
+        dl("On-duty hours", "on_duty_hours"),
+        1.0,
+        16.0,
+        float(defaults.on_duty_hours),
+        0.5,
+        help=TIP["on_duty_hours"],
     )
     truck_volume = a3.number_input(
-        "Truck volume (cu ft)",
+        dl("Truck volume (cu ft)", "truck_volume_cuft"),
         50.0,
         5000.0,
         float(defaults.truck_volume_cuft),
@@ -198,7 +227,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["truck_volume_cuft"],
     )
     max_loads = a4.number_input(
-        "Max loads per truck",
+        dl("Max loads per truck", "max_loads_per_truck"),
         1,
         5,
         int(defaults.max_loads_per_truck),
@@ -206,20 +235,28 @@ with st.expander("Advanced settings", expanded=False):
     )
     b1, b2, b3, b4 = st.columns(4)
     stop_buffer = b1.number_input(
-        "Stop buffer (min)",
+        dl("Stop buffer (min)", "stop_buffer_minutes"),
         0,
         120,
         int(defaults.stop_buffer_minutes),
         help=TIP["stop_buffer_minutes"],
     )
     reload_minutes = b2.number_input(
-        "Reload (min)", 0, 240, int(defaults.reload_minutes), help=TIP["reload_minutes"]
+        dl("Reload (min)", "reload_minutes"),
+        0,
+        240,
+        int(defaults.reload_minutes),
+        help=TIP["reload_minutes"],
     )
     lunch_minutes = b3.number_input(
-        "Lunch (min)", 0, 120, int(defaults.lunch_minutes), help=TIP["lunch_minutes"]
+        dl("Lunch (min)", "lunch_minutes"),
+        0,
+        120,
+        int(defaults.lunch_minutes),
+        help=TIP["lunch_minutes"],
     )
     eta_window = b4.number_input(
-        "ETA window (± hours)",
+        dl("ETA window (± hours)", "eta_window_hours"),
         0.5,
         6.0,
         float(defaults.eta_window_hours),
@@ -233,19 +270,19 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["lunch_window"],
     )
     lunch_earliest = c2.time_input(
-        "Lunch earliest start",
+        dl("Lunch earliest start", "lunch_earliest"),
         value=defaults.lunch_earliest or dt.time(11, 0),
         disabled=any_time,
         help=TIP["lunch_window"],
     )
     lunch_latest = c3.time_input(
-        "Lunch latest start",
+        dl("Lunch latest start", "lunch_latest"),
         value=defaults.lunch_latest or dt.time(14, 0),
         disabled=any_time,
         help=TIP["lunch_window"],
     )
     lunch_mode = c4.selectbox(
-        "Lunch mode",
+        dl("Lunch mode", "lunch_mode"),
         ["smart", "simple"],
         index=0 if defaults.lunch_mode == "smart" else 1,
         help=TIP["lunch_mode"],
@@ -257,7 +294,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["truck_weight_lb_cap"],
     )
     weight_cap = d2.number_input(
-        "Weight cap (lb)",
+        dl("Weight cap (lb)", "truck_weight_lb_cap"),
         100.0,
         100000.0,
         float(defaults.truck_weight_lb_cap or 10000.0),
@@ -268,11 +305,15 @@ with st.expander("Advanced settings", expanded=False):
         "Cap pieces", value=defaults.truck_pieces_cap is not None, help=TIP["truck_pieces_cap"]
     )
     pieces_cap = d4.number_input(
-        "Pieces cap", 1, 1000, int(defaults.truck_pieces_cap or 40), disabled=not use_pieces_cap
+        dl("Pieces cap", "truck_pieces_cap"),
+        1,
+        1000,
+        int(defaults.truck_pieces_cap or 40),
+        disabled=not use_pieces_cap,
     )
     e1, e2, e3, e4 = st.columns(4)
     travel_provider = e1.selectbox(
-        "Travel times",
+        dl("Travel times", "travel_provider"),
         ["auto", "osrm", "haversine", "tomtom"],
         index=["auto", "osrm", "haversine", "tomtom"].index(defaults.travel_provider),
         format_func=lambda v: {
@@ -284,7 +325,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["travel_provider"],
     )
     road_factor = e2.number_input(
-        "Straight-line road factor",
+        dl("Straight-line road factor", "haversine_road_factor"),
         1.0,
         2.5,
         float(defaults.haversine_road_factor),
@@ -292,7 +333,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["haversine_road_factor"],
     )
     avg_speed = e3.number_input(
-        "Straight-line speed (mph)",
+        dl("Straight-line speed (mph)", "haversine_avg_speed_mph"),
         5.0,
         70.0,
         float(defaults.haversine_avg_speed_mph),
@@ -300,21 +341,21 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["haversine_avg_speed_mph"],
     )
     first_solution = e4.selectbox(
-        "First solution strategy",
+        dl("First solution strategy", "first_solution_strategy"),
         ["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"],
         index=0 if defaults.first_solution_strategy == "PARALLEL_CHEAPEST_INSERTION" else 1,
         help=TIP["first_solution_strategy"],
     )
     f1, f2, f3, f4 = st.columns(4)
     pf1 = f1.number_input(
-        "D+1 stop value (min of driving)",
+        dl("D+1 stop value (min of driving)", "", reference.pull_forward_value_minutes.get(1)),
         1,
         330,
         int(defaults.pull_forward_value_minutes.get(1, 240)),
         help=TIP["pull_forward_value_minutes"],
     )
     pf2 = f2.number_input(
-        "D+2 stop value (min of driving)",
+        dl("D+2 stop value (min of driving)", "", reference.pull_forward_value_minutes.get(2)),
         1,
         330,
         int(defaults.pull_forward_value_minutes.get(2, 120)),
@@ -340,14 +381,14 @@ with st.expander("Advanced settings", expanded=False):
     st.markdown("**CA LFLT rules** (0 = off)")
     h1, h2, h3, h4 = st.columns(4)
     first_load = h1.number_input(
-        "First loading (min)",
+        dl("First loading (min)", "first_load_minutes"),
         0,
         240,
         int(defaults.first_load_minutes),
         help=TIP["first_load_minutes"],
     )
     use_first_appt = h2.checkbox(
-        "First appointment time",
+        dl("First appointment time", "earliest_delivery"),
         value=defaults.earliest_delivery is not None,
         help=TIP["earliest_delivery"],
     )
@@ -358,7 +399,7 @@ with st.expander("Advanced settings", expanded=False):
         label_visibility="collapsed",
     )
     pallet_volume = h3.number_input(
-        "Pallet load volume (cu ft)",
+        dl("Pallet load volume (cu ft)", "pallet_volume_cuft"),
         0.0,
         5000.0,
         float(defaults.pallet_volume_cuft or 0.0),
@@ -366,7 +407,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["pallet_volume_cuft"],
     )
     unload_rate = h4.number_input(
-        "Unloading (min per cu ft)",
+        dl("Unloading (min per cu ft)", "unload_minutes_per_cuft"),
         0.0,
         5.0,
         float(defaults.unload_minutes_per_cuft or 0.0),
@@ -375,7 +416,7 @@ with st.expander("Advanced settings", expanded=False):
     )
     i1, i2, i3, i4 = st.columns(4)
     one_way = i1.number_input(
-        "One-way limit (mi)",
+        dl("One-way limit (mi)", "max_one_way_miles"),
         0.0,
         1000.0,
         float(defaults.max_one_way_miles or 0.0),
@@ -383,7 +424,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["max_one_way_miles"],
     )
     carrier_check = i2.number_input(
-        "Carrier check above (mi)",
+        dl("Carrier check above (mi)", "carrier_check_miles"),
         0.0,
         1000.0,
         float(defaults.carrier_check_miles or 0.0),
@@ -391,7 +432,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["carrier_check_miles"],
     )
     two_turn_miles = i3.number_input(
-        "Two-turn total (mi)",
+        dl("Two-turn total (mi)", "two_turn_max_miles"),
         0.0,
         2000.0,
         float(defaults.two_turn_max_miles or 0.0),
@@ -399,7 +440,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["two_turn_max_miles"],
     )
     turn_gap = i4.number_input(
-        "Turn gap after last delivery (min)",
+        dl("Turn gap after last delivery (min)", "turn_gap_minutes"),
         0,
         600,
         int(defaults.turn_gap_minutes),
@@ -407,7 +448,7 @@ with st.expander("Advanced settings", expanded=False):
     )
     g1, g2, g3, g4 = st.columns(4)
     obs_mode = g1.selectbox(
-        "OBS stops",
+        dl("OBS stops", "obs_mode"),
         ["last", "exclude", "normal"],
         index=["last", "exclude", "normal"].index(defaults.obs_mode),
         format_func=lambda v: {
@@ -418,7 +459,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["obs_mode"],
     )
     obs_radius = g2.number_input(
-        "OBS radius (mi)",
+        dl("OBS radius (mi)", "obs_radius_miles"),
         0.5,
         50.0,
         float(defaults.obs_radius_miles),
@@ -427,18 +468,18 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["obs_radius_miles"],
     )
     floating_start = g3.checkbox(
-        "Driver start follows the first stop",
+        dl("Driver start follows the first stop", "floating_start"),
         value=defaults.floating_start,
         help=TIP["floating_start"],
     )
     earliest_start = g3.time_input(
-        "Earliest driver start",
+        dl("Earliest driver start", "earliest_shift_start"),
         value=defaults.earliest_shift_start,
         disabled=not floating_start,
         help=TIP["earliest_shift_start"],
     )
     late_first_stop_cost = g4.number_input(
-        "Late first-stop cost (per second after the appointment)",
+        dl("Late first-stop cost (per sec late)", "late_first_stop_cost"),
         0,
         100,
         int(defaults.late_first_stop_cost),
@@ -451,13 +492,13 @@ with st.expander("Advanced settings", expanded=False):
     if use_tomtom and not cfg.tomtom_api_key:
         st.warning("No TOMTOM_API_KEY in .env: this run will use OSRM x traffic factor.")
     traffic_depart = k1.time_input(
-        "Departure time for traffic",
+        dl("Departure time for traffic", "traffic_depart_time"),
         value=defaults.traffic_depart_time,
         disabled=not use_tomtom,
         help=TIP["traffic_depart_time"],
     )
     truck_length = k2.number_input(
-        "Truck length (ft)",
+        dl("Truck length (ft)", "truck_length_ft"),
         10.0,
         80.0,
         float(defaults.truck_length_ft),
@@ -466,7 +507,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["truck_dimensions"],
     )
     truck_height = k3.number_input(
-        "Truck height (ft)",
+        dl("Truck height (ft)", "truck_height_ft"),
         6.0,
         15.0,
         float(defaults.truck_height_ft),
@@ -475,7 +516,7 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["truck_dimensions"],
     )
     truck_weight = k4.number_input(
-        "Gross weight (lb)",
+        dl("Gross weight (lb)", "truck_gross_weight_lb"),
         5000.0,
         80000.0,
         float(defaults.truck_gross_weight_lb),
@@ -485,7 +526,7 @@ with st.expander("Advanced settings", expanded=False):
     )
     j1, j2, j3, _j4 = st.columns(4)
     geocode_mode = j1.selectbox(
-        "Stop locations",
+        dl("Stop locations", "geocode_mode"),
         ["address", "fill"],
         index=["address", "fill"].index(defaults.geocode_mode),
         format_func=lambda v: {
@@ -495,14 +536,14 @@ with st.expander("Advanced settings", expanded=False):
         help=TIP["geocode_mode"],
     )
     same_location_minutes = j2.number_input(
-        "Same-point travel (min)",
+        dl("Same-point travel (min)", "same_location_travel_minutes"),
         0,
         60,
         int(defaults.same_location_travel_minutes),
         help=TIP["same_location_travel_minutes"],
     )
     traffic_factor = j3.number_input(
-        "Traffic factor (x OSRM time)",
+        dl("Traffic factor (x OSRM time)", "traffic_factor"),
         1.0,
         3.0,
         float(defaults.traffic_factor),
