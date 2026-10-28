@@ -138,6 +138,7 @@ def export_excel(
         ("Created", plan.created_at.strftime("%Y-%m-%d %H:%M")),
         ("Source file", source_name),
         ("Preset", plan.settings.get("preset", "")),
+        ("Goal", plan.settings.get("goal", "")),
         ("Travel times", source_label(plan.matrix_source)),
         ("", ""),
         ("Trucks used / selected", f"{k.trucks_used} / {k.trucks_selected}"),

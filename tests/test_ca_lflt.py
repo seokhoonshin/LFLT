@@ -282,18 +282,23 @@ def test_volume_value_keeps_the_big_stop_when_trucks_are_short() -> None:
         served = res.plan.served_stop_ids
         return len(served), sum(by_id[i].delivery_volume for i in served)
 
-    assert served_volume(volume_value_cuft=None) == (3, 180)  # count only: the small ones
-    assert served_volume() == (2, 760)  # default 100 cu ft = 1 stop: big + one small
+    assert served_volume(goal="custom", volume_value_cuft=None) == (3, 180)  # count only
+    assert served_volume() == (2, 760)  # A (default): 100 cu ft = 1 stop: big + one small
+    assert served_volume(goal="stops") == (3, 180)  # B: the most stops
+    assert served_volume(goal="volume") == (2, 760)  # C: the most cu ft
 
 
 def test_stop_penalty_scales_priority_2_by_volume() -> None:
     s = _ca()
-    assert s.stop_penalty(2, 300) == 4 * s.penalty_for_tier(2)
+    assert s.stop_penalty(2, 300) == 4 * s.stop_penalty(2, 0)
     assert s.stop_penalty(1, 0) > s.stop_penalty(2, 800)
-    assert s.stop_penalty(1, 300) == 4 * s.penalty_for_tier(1)  # tier 1 counts volume too
-    tight = _ca(volume_value_cuft=10)
-    assert tight.stop_penalty(2, 800) < tight.stop_penalty(1, 0)  # capped below tier 1
-    assert _ca(volume_value_cuft=None).stop_penalty(2, 300) == s.penalty_for_tier(2)
+    assert s.stop_penalty(1, 300) == 4 * s.stop_penalty(1, 0)  # tier 1 counts volume too
+    tight = _ca(goal="custom", volume_value_cuft=10)
+    assert tight.stop_penalty(2, 800) < tight.stop_penalty(1, 0)  # tiers stay ordered
+    custom = _ca(goal="custom", volume_value_cuft=None)
+    assert custom.stop_penalty(2, 300) == s.penalty_for_tier(2)
+    vol = _ca(goal="volume")
+    assert vol.stop_penalty(2, 300) > 50 * vol.stop_penalty(2, 0)
 
 
 def test_stop_transit_is_shown_apart_from_driving() -> None:

@@ -48,7 +48,7 @@
 26. DC에서 가까운 주문 먼저
 27. GRND를 포함해서 최적화하는 버전과 빼고 최적화하는 버전을 둘 다 돌릴 수 있으면 좋겠음
 28. GRND를 포함해서 최적화하는 경우 GRND는 맨 후순위
-28a. 모든 후보를 스탑 수와 볼륨으로 같이 봄: 스탑 1개 = 1 + cuft / 100 (Advanced settings "Volume value"). 트럭이 모자랄 때 스탑 수와 장입량을 같이 높임. 기본은 업로드의 priority 컬럼 무시(모두 동일). "Priority 1 first"를 켜면 기존 LFLT 로드(priority 1)를 항상 먼저.
+28a. Goal (New Run 상단): A = 스탑 + 볼륨 (스탑 1개 = 1 + cuft / 100), B = 스탑 수 최대 (같으면 볼륨), C = 볼륨 최대, Custom = Advanced settings "Volume value". 기본은 업로드의 priority 컬럼 무시(모두 동일). "Priority 1 first"를 켜면 기존 LFLT 로드(priority 1)를 항상 먼저.
     1. GRND를 뺀 나머지로 먼저 최적화
     2. 그다음 남는 시간과 용량에만 GRND를 끼워 넣음
     3. GRND는 이미 배정된 스탑에서 5mi 이내일 때만 추가

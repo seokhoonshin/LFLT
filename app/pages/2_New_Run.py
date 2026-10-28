@@ -21,6 +21,7 @@ import streamlit as st
 from routeopt.config import (
     SETTING_TOOLTIPS,
     RunSettings,
+    goal_description,
     preset_description,
     validate_penalty_invariants,
 )
@@ -122,6 +123,7 @@ if profile != defaults.profile:  # switch every default to the other rule set
 KEY_SETTINGS = {
     "shift_start": "Shift start",
     "preset": "Preset",
+    "goal": "Goal",
     "travel_provider": "Travel times",
     "truck_volume_cuft": "Truck volume",
     "max_loads_per_truck": "Max loads",
@@ -166,19 +168,39 @@ def dl(label: str, key: str, value: Any = None) -> str:
 
 
 top1, top2, top3 = st.columns([1.2, 1, 1])
-preset = top1.radio(
-    "Preset",
-    ["A", "B", "Custom"],
-    index=["A", "B", "Custom"].index(defaults.preset),
-    format_func=lambda p: {
-        "A": "A — Fewest trucks (packed)",
-        "B": "B — Balanced",
-        "Custom": "Custom",
-    }[p],
-    help=TIP["preset"],
-    horizontal=True,
-)
-st.caption(preset_description(preset))  # type: ignore[arg-type]
+GOALS = ["both", "stops", "volume", "custom"]
+if profile == "ca_lflt":
+    # CA: the trucks are fixed, so the choice is which stops to keep; trucks stay packed (A)
+    preset = defaults.preset
+    goal = top1.radio(
+        "Goal",
+        GOALS,
+        index=GOALS.index(defaults.goal),
+        format_func=lambda g: {
+            "both": "A — Stops + volume",
+            "stops": "B — Max stops",
+            "volume": "C — Max volume",
+            "custom": "Custom",
+        }[g],
+        help=TIP["goal"],
+        horizontal=True,
+    )
+    st.caption(goal_description(goal))  # type: ignore[arg-type]
+else:
+    goal = defaults.goal
+    preset = top1.radio(
+        "Preset",
+        ["A", "B", "Custom"],
+        index=["A", "B", "Custom"].index(defaults.preset),
+        format_func=lambda p: {
+            "A": "A — Fewest trucks (packed)",
+            "B": "B — Balanced",
+            "Custom": "Custom",
+        }[p],
+        help=TIP["preset"],
+        horizontal=True,
+    )
+    st.caption(preset_description(preset))  # type: ignore[arg-type]
 plan_date = top2.date_input("Delivery day (D)", value=today_plus(2), help=TIP["plan_date"])
 top2.caption(
     f"Run day (D-2): **{(plan_date - dt.timedelta(days=2)).isoformat()}** · today at the hub ({HUB_TIMEZONE}): {hub_today().isoformat()}"
@@ -497,6 +519,7 @@ with st.expander("Advanced settings", expanded=False):
         2000.0,
         float(defaults.volume_value_cuft or 0.0),
         10.0,
+        disabled=goal != "custom",
         help=TIP["volume_value_cuft"],
     )
     st.markdown("**TomTom** (used when Travel times = TomTom)")
@@ -613,6 +636,7 @@ try:
         stop_transit_minutes=int(stop_transit),
         volume_value_cuft=float(volume_value) or None,
         use_priority=bool(use_priority),
+        goal=goal,  # type: ignore[arg-type]
         traffic_factor=float(traffic_factor),
         traffic_depart_time=traffic_depart,
         truck_length_ft=float(truck_length),

@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from routeopt.domain import hub_today, time_to_seconds
 
 PresetName = Literal["A", "B", "Custom"]
+GoalName = Literal["both", "stops", "volume", "custom"]
 LunchMode = Literal["smart", "simple"]
 TravelProviderChoice = Literal["auto", "osrm", "haversine", "tomtom"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
@@ -55,6 +56,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "stop_transit_minutes": 20,
         "volume_value_cuft": 100.0,
         "use_priority": False,
+        "goal": "both",
         "stop_buffer_minutes": 0,
         "traffic_factor": 1.3,
     },
@@ -83,6 +85,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
         "stop_transit_minutes": 0,
         "volume_value_cuft": None,
         "use_priority": True,
+        "goal": "custom",
         "stop_buffer_minutes": 20,
         "traffic_factor": 1.0,
     },
@@ -180,6 +183,9 @@ class RunSettings(BaseModel):
     # stop value = one stop + its volume / this many cu ft (None = count stops only)
     volume_value_cuft: float | None = 100.0
     use_priority: bool = False  # False: the upload's priority column is ignored (all alike)
+    # which stops to keep when there are more candidates than trucks (see GOAL_WEIGHTS);
+    # "custom" uses volume_value_cuft
+    goal: GoalName = "both"
     traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
     traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
     truck_length_ft: float = 26.0  # TomTom truck routing
@@ -405,16 +411,22 @@ class RunSettings(BaseModel):
     def stop_penalty(self, tier: int, volume: float) -> int:
         """Drop penalty for one stop.  With a volume value, a D stop is worth one stop plus
         its volume / ``volume_value_cuft`` stops, so a planner short of trucks keeps both
-        many stops and much volume.  Tiers stay ordered: a stop is capped just below the
-        smallest stop of the tier above."""
+        many stops and much volume."""
         base = self.penalty_for_tier(tier)
-        per = self.volume_value_cuft
+        weight, per = self.goal_weights
         if not per or tier > 3:
             return base
-        value = int(base * (1 + max(0.0, volume) / per))
-        if tier > 1:  # never worth a stop of the tier above
-            value = min(value, self.penalty_for_tier(tier - 1) - 1)
-        return value
+        # keep the tiers ordered: each tier up is multiplied by k = (full truck) / (empty
+        # stop), so the smallest stop of a tier outweighs the largest stop of the next one
+        k = (weight + self.truck_volume_cuft / per) / weight
+        return int(base * (weight + max(0.0, volume) / per) * k ** (3 - tier))
+
+    @property
+    def goal_weights(self) -> tuple[float, float | None]:
+        """(value of one stop, cu ft worth one more stop) for the goal."""
+        if self.goal == "custom":
+            return 1.0, self.volume_value_cuft
+        return GOAL_WEIGHTS[self.goal]
 
     def pull_forward_offsets(self) -> list[int]:
         return list(self.pull_forward_days)
@@ -475,6 +487,23 @@ def validate_penalty_invariants(settings: RunSettings, n_trucks: int) -> list[st
     if p3 <= p4:
         problems.append("Pull-forward values must be far below the LTL (tier 3) penalty.")
     return problems
+
+
+# goal -> (value of one stop, cu ft worth one more stop)
+GOAL_WEIGHTS: dict[str, tuple[float, float | None]] = {
+    "both": (1.0, 100.0),  # 100 cu ft = one stop
+    "stops": (1.0, 10_000.0),  # stops first; volume only breaks ties
+    "volume": (0.05, 100.0),  # volume first; a stop alone is worth 5 cu ft
+}
+
+
+def goal_description(goal: GoalName) -> str:
+    return {
+        "both": "Stops + volume: each stop counts as 1 + its cu ft / 100 (300 cu ft = 4 stops).",
+        "stops": "Max stops: as many stops as possible; volume only decides between equal counts.",
+        "volume": "Max volume: as many cu ft as possible; small stops only when they fit on the way.",
+        "custom": "Custom: each stop counts as 1 + its cu ft / Volume value (Advanced settings).",
+    }[goal]
 
 
 def preset_description(preset: PresetName) -> str:
@@ -577,13 +606,17 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "OSRM road times assume empty roads; they are multiplied by this for daytime "
         "traffic (distances are not changed). Straight-line estimates are not scaled."
     ),
+    "goal": (
+        "Which stops to keep when there are more candidates than trucks: A = stops and "
+        "volume together, B = most stops, C = most volume, Custom = Volume value."
+    ),
     "use_priority": (
         "On: priority 1 (existing LFLT loads in the upload's priority column) is always "
         "planned before priority 2. Off: every candidate is alike and the plan keeps the "
         "stops with the most stops and volume."
     ),
     "volume_value_cuft": (
-        "Stop value: each stop counts as 1 + its volume / this many cu ft "
+        "Used when Goal = Custom. Each stop counts as 1 + its volume / this many cu ft "
         "(100 = a 300 cu ft stop is worth 4 small stops). Raises both stops and volume when "
         "there are more candidates than trucks. 0 = count stops only."
     ),
