@@ -154,8 +154,11 @@ def load_table(
                 "Type": "/".join(sorted({sh.shipment_type.value for sh in s.shipments}))
                 if s
                 else "",
+                "Drive min": v.travel_min_from_prev,
+                "Miles from prev": v.dist_mi_from_prev,
                 "Service min": s.service_total_minutes if s else "",
                 "Depart": clock(v.depart_s),
+                "Stop volume": round(v.volume_on_arrival - v.volume_after, 1),
                 "Volume after": v.volume_after,
                 "Lunch before": "🍽️" if v.lunch_before else "",
                 "Appointment contact": s.contact if s else "",

@@ -49,7 +49,9 @@ def test_defaults_match_brief() -> None:
 def test_ca_lflt_profile_defaults() -> None:
     s = RunSettings(plan_date=PLAN_DATE)
     assert s.profile == "ca_lflt"
-    assert s.shift_start == dt.time(6, 0) and s.first_load_minutes == 60
+    assert s.shift_start == dt.time(6, 0) and s.first_load_minutes == 90
+    assert s.reload_minutes == 120 and s.floating and s.earliest_shift_start == dt.time(3, 0)
+    assert s.model_origin_s == 3 * 3600 and s.model_offset_s == 3 * 3600
     assert s.earliest_delivery == dt.time(8, 0) and s.earliest_delivery_rel_s == 2 * 3600
     assert s.on_duty_hours == 10 and s.stop_buffer_minutes == 20
     assert s.truck_volume_cuft == 800 and s.volume_strict and s.volume_cap_tenths == 7999

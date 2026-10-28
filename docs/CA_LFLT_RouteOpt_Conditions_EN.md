@@ -15,9 +15,9 @@
 
 ## Time
 
-8. Maximum on-duty time is 10 hours, including the return to the DC
-9. Loading starts at 06:00; after 60 minutes of loading, trucks may depart from 07:00
-10. The first delivery is at 08:00 or later; a truck that arrives early waits
+8. Maximum on-duty time is 10 hours from the driver's start, including loading and the return to the DC (e.g. 06:00-16:00, or 08:00-18:00)
+9. Driver start = first delivery time (08:00) - 90 minutes of morning loading - drive from the DC to the first stop. First stops that can be reached by 08:00 from a 06:00 start are preferred; otherwise the driver starts earlier, as calculated (not before 03:00)
+10. The first delivery is at 08:00 or later
 11. Stop time: 20 minutes per stop
 12. Unloading time: cu ft × 0.1 minutes
 13. Lunch: 30 minutes, between 11:00 and 14:00
@@ -39,7 +39,7 @@
 20. Two-turn (second trip) capability is required
 21. For a two-turn truck, the total round-trip distance is less than 300 miles
 22. Allow at least 3 hours between turns (live loading: return and reloading time)
-23. Turn 2 departs at the later of (1) return + DC-to-DC drive + reload, or (2) last delivery of turn 1 + 3 hours
+23. Turn 2 departs at the later of (1) return + DC-to-DC drive + 2 hours of afternoon loading, or (2) last delivery of turn 1 + 3 hours
 24. Lunch is taken between the turns
 
 ## Assignment Priority

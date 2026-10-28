@@ -405,7 +405,7 @@ with st.expander("Advanced settings", expanded=False):
         int(defaults.turn_gap_minutes),
         help=TIP["turn_gap_minutes"],
     )
-    g1, g2, _g3, _g4 = st.columns(4)
+    g1, g2, g3, g4 = st.columns(4)
     obs_mode = g1.selectbox(
         "OBS stops",
         ["last", "exclude", "normal"],
@@ -425,6 +425,25 @@ with st.expander("Advanced settings", expanded=False):
         0.5,
         disabled=obs_mode != "last",
         help=TIP["obs_radius_miles"],
+    )
+    floating_start = g3.checkbox(
+        "Driver start follows the first stop",
+        value=defaults.floating_start,
+        help=TIP["floating_start"],
+    )
+    earliest_start = g3.time_input(
+        "Earliest driver start",
+        value=defaults.earliest_shift_start,
+        disabled=not floating_start,
+        help=TIP["earliest_shift_start"],
+    )
+    early_start_cost = g4.number_input(
+        "Early-start cost (per second before Shift start)",
+        0,
+        100,
+        int(defaults.early_start_cost),
+        disabled=not floating_start,
+        help=TIP["early_start_cost"],
     )
     st.markdown("**TomTom** (used when Travel times = TomTom)")
     k1, k2, k3, k4 = st.columns(4)
@@ -517,6 +536,9 @@ try:
         haversine_avg_speed_mph=float(avg_speed),
         first_load_minutes=int(first_load),
         earliest_delivery=earliest_delivery if use_first_appt else None,
+        floating_start=bool(floating_start),
+        earliest_shift_start=earliest_start,
+        early_start_cost=int(early_start_cost),
         pallet_volume_cuft=float(pallet_volume) or None,
         unload_minutes_per_cuft=float(unload_rate) or None,
         max_one_way_miles=float(one_way) or None,

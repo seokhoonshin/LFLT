@@ -512,6 +512,7 @@ def validate_rows(
                 "site": site,
                 "pallet_required": pallet,
                 "priority": priority,
+                "declared_value": float(parse_float(raw.get("declared_value")) or 0.0),
             }
         )
 

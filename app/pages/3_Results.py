@@ -19,6 +19,7 @@ import streamlit.components.v1 as components
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 from routeopt.edit.revalidate import can_export
 from routeopt.export.excel import export_excel
+from routeopt.export.load_summary import export_load_summary_pdf
 from routeopt.export.mapping import build_map, map_html
 from routeopt.export.route_sheets_pdf import export_route_sheets
 from routeopt.travel.osrm import OSRMProvider
@@ -144,7 +145,8 @@ for truck in plan.trucks:
     title = (
         f"{truck.number} · {truck.driver_name or 'no driver'} — {len(loads)} load(s), "
         f"{sum(len(load.stops) for load in loads)} stops, on duty {minutes_text(truck.on_duty_minutes)} "
-        f"({clock(loads[0].depart_s)} → {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
+        f"(start {clock(truck.start_s if truck.start_s is not None else loads[0].depart_s)}"
+        f" → back {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
     )
     with st.expander(title):
         for load in loads:
@@ -224,7 +226,7 @@ st.subheader("Export")
 gate = can_export(plan)
 if not gate.allowed:
     st.error(gate.message + " Use the Edit page to fix the plan or to export anyway with a reason.")
-e1, e2, e3, _ = st.columns([1, 1, 1, 3])
+e1, e2, e4, e3, _ = st.columns([1, 1, 1, 1, 2])
 out_dir = Path(cfg.exports_dir)
 if e1.button("Export Excel", disabled=not gate.allowed):
     path = export_excel(
@@ -246,6 +248,12 @@ if e2.button("Export PDF route sheets", disabled=not gate.allowed):
         plan.run_id, plan.plan_version, "pdf", str(path), plan.export_override_reason
     )
     st.session_state["last_pdf"] = str(path)
+if e4.button("Export load summary PDF", disabled=not gate.allowed):
+    path = export_load_summary_pdf(plan, stops, settings, out_dir)
+    repo.record_export(
+        plan.run_id, plan.plan_version, "pdf", str(path), plan.export_override_reason
+    )
+    st.session_state["last_summary_pdf"] = str(path)
 if e3.button("Edit this plan", type="primary"):
     st.switch_page("pages/4_Edit.py")
 for key, label, mime in (
@@ -255,6 +263,7 @@ for key, label, mime in (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ),
     ("last_pdf", "Download PDF", "application/pdf"),
+    ("last_summary_pdf", "Download load summary PDF", "application/pdf"),
 ):
     p = st.session_state.get(key)
     if p and Path(p).exists() and plan.run_id in p and f"_v{plan.plan_version}" in p:

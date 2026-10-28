@@ -165,7 +165,8 @@ def _load_page(
                 f" | reload from {clock(load.reload_start_s)}"
                 if load.reload_start_s is not None
                 else (
-                    f" | loading from {clock(settings.shift_start_s)}"
+                    f" | driver start / loading from "
+                    f"{clock(truck.start_s if truck.start_s is not None else settings.shift_start_s)}"
                     if settings.first_load_minutes
                     else " | pre-loaded before the shift"
                 )

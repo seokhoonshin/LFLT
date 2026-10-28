@@ -62,7 +62,7 @@ def extract_plan(
     stops = inputs.stops
     stops_by_id = {s.stop_id: s for s in stops}
     node_of = node_index_map(stops)
-    shift = settings.shift_start_s
+    shift = settings.model_origin_s  # solver time 0
     service_s = [0] * N_DEPOTS + [s.service_total_minutes * 60 for s in stops]
 
     routes_by_truck: dict[int, list[RawRoute]] = {}

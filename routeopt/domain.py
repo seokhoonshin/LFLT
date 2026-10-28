@@ -162,6 +162,7 @@ class Shipment(BaseModel):
     site: str = DEFAULT_SITE
     pallet_required: bool = False
     priority: int | None = None  # CA: 1 existing LFLT, 2 add-on, 3 low
+    declared_value: float = 0.0  # for the load summary export (sum per load)
 
     @field_validator("site")
     @classmethod
@@ -322,6 +323,7 @@ class PlanTruck(BaseModel):
     number: str
     driver_name: str = ""
     on_duty_minutes: float = 0.0
+    start_s: int | None = None  # driver start (loading begins); None = shift start
     lunch: LunchInfo = Field(default_factory=LunchInfo)
     loads: list[Load] = Field(default_factory=list)
 

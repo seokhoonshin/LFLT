@@ -32,7 +32,10 @@ ProfileName = Literal["ca_lflt", "legacy"]
 PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
     "ca_lflt": {
         "shift_start": dt.time(6, 0),
-        "first_load_minutes": 60,
+        "first_load_minutes": 90,
+        "reload_minutes": 120,
+        "floating_start": True,
+        "earliest_shift_start": dt.time(3, 0),
         "earliest_delivery": dt.time(8, 0),
         "truck_volume_cuft": 800.0,
         "volume_strict": True,
@@ -54,6 +57,9 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
     "legacy": {
         "shift_start": dt.time(8, 0),
         "first_load_minutes": 0,
+        "reload_minutes": 60,
+        "floating_start": False,
+        "earliest_shift_start": dt.time(8, 0),
         "earliest_delivery": None,
         "truck_volume_cuft": 600.0,
         "volume_strict": False,
@@ -122,7 +128,14 @@ class RunSettings(BaseModel):
     pull_forward_days: list[int] = Field(default_factory=list)  # subset of [1, 2]
     trucks_selected: list[str] = Field(default_factory=list)  # empty = all active trucks
     shift_start: dt.time = dt.time(6, 0)
-    first_load_minutes: int = 60  # loading before the first departure (live loading)
+    first_load_minutes: int = 90  # loading before the first departure (live loading)
+    # CA: the driver starts so that the first stop is reached at the first appointment time
+    # (start = appointment - first loading - drive to the first stop) and works on_duty_hours
+    # from there.  shift_start is the preferred earliest start: starting before it is
+    # allowed down to earliest_shift_start but costs early_start_cost per second.
+    floating_start: bool = True
+    earliest_shift_start: dt.time = dt.time(3, 0)
+    early_start_cost: int = 2
     earliest_delivery: dt.time | None = dt.time(8, 0)  # first appointment; early trucks wait
     on_duty_hours: float = 10.0
     truck_volume_cuft: float = 800.0
@@ -132,7 +145,7 @@ class RunSettings(BaseModel):
     truck_weight_lb_cap: float | None = None
     truck_pieces_cap: int | None = None
     stop_buffer_minutes: int = 20
-    reload_minutes: int = 60
+    reload_minutes: int = 120
     lunch_minutes: int = 30
     lunch_earliest: dt.time | None = dt.time(11, 0)
     lunch_latest: dt.time | None = dt.time(14, 0)
@@ -295,6 +308,25 @@ class RunSettings(BaseModel):
     @property
     def first_load_seconds(self) -> int:
         return self.first_load_minutes * 60
+
+    @property
+    def floating(self) -> bool:
+        """Driver start floats with the first stop (needs a first appointment time)."""
+        return self.floating_start and self.earliest_delivery is not None
+
+    @property
+    def earliest_shift_start_s(self) -> int:
+        return min(time_to_seconds(self.earliest_shift_start), self.shift_start_s)
+
+    @property
+    def model_origin_s(self) -> int:
+        """Clock time of solver time 0: the earliest possible start when the start floats."""
+        return self.earliest_shift_start_s if self.floating else self.shift_start_s
+
+    @property
+    def model_offset_s(self) -> int:
+        """Seconds from solver time 0 to shift_start (0 unless the start floats)."""
+        return self.shift_start_s - self.model_origin_s
 
     @property
     def earliest_delivery_rel_s(self) -> int:
@@ -468,6 +500,16 @@ SETTING_TOOLTIPS: dict[str, str] = {
         "Legacy = the original single-hub brief."
     ),
     "first_load_minutes": "Loading time at the DC before the first departure of the day.",
+    "floating_start": (
+        "Driver start follows the first stop: start = first appointment - first loading - "
+        "drive to the first stop, and the on-duty hours count from that start "
+        "(e.g. 06:00-16:00, or 08:00-18:00)."
+    ),
+    "earliest_shift_start": "Earliest a driver may start when the start floats (a far first stop).",
+    "early_start_cost": (
+        "Cost per second of starting before Shift start: higher = prefer first stops that "
+        "can be reached by the first appointment from a Shift-start start."
+    ),
     "earliest_delivery": "First customer appointment; a truck that arrives earlier waits.",
     "volume_strict": "Volume must stay below the cap (not equal to it).",
     "pallet_volume_cuft": "Volume limit of a load carrying any shipment that needs a pallet.",

@@ -51,7 +51,7 @@ def test_unloading_minutes_come_from_volume() -> None:
     assert stops[0].service_total_minutes == 20 + 5  # 20 min stop + 46.3 x 0.1 rounded
 
 
-def test_two_dcs_never_share_a_load_and_start_at_07_00() -> None:
+def test_two_dcs_never_share_a_load_and_the_driver_start_floats() -> None:
     s = _ca()
     ships = [_ship(15, 30 * i, address=f"{i} Rialto Rd", volume=60) for i in range(5)]
     ships += [
@@ -66,8 +66,12 @@ def test_two_dcs_never_share_a_load_and_start_at_07_00() -> None:
         assert {by_id[v.stop_id].site for v in load.stops} == {load.site}
     for truck in res.plan.used_trucks:
         first = truck.loads[0]
-        assert clock(first.depart_s) == "7:00 AM"  # 06:00 + 60 min loading
+        assert truck.start_s is not None
+        assert first.depart_s == truck.start_s + 90 * 60  # 90 min first loading
+        # start = 08:00 appointment - loading - drive: the first stop is reached at 08:00
+        assert clock(first.stops[0].arrive_s) == "8:00 AM"
         assert all(v.arrive_s >= 8 * 3600 for ld in truck.loads for v in ld.stops)
+        assert abs(truck.on_duty_minutes - (truck.loads[-1].return_s - truck.start_s) / 60) < 0.1
 
 
 def test_pallet_loads_stay_below_400() -> None:
@@ -201,7 +205,7 @@ def test_ca_upload_columns() -> None:
 
 def test_ca_profile_rejects_pull_forward_free_settings_roundtrip() -> None:
     s = _ca(shift_start=dt.time(6, 30))
-    assert s.shift_start == dt.time(6, 30) and s.first_load_minutes == 60
+    assert s.shift_start == dt.time(6, 30) and s.first_load_minutes == 90
 
 
 def test_lgc2_and_lgc7_are_separate_dcs_at_one_address() -> None:
@@ -232,3 +236,17 @@ def test_saved_runs_with_old_site_codes_still_load() -> None:
         ).site
         == "LGC8"
     )
+
+
+def test_driver_start_follows_the_first_stop_and_prefers_a_near_one() -> None:
+    s = _ca()
+    stops = _stops([_ship(5, 0, address="1 Near Rd"), _ship(60, 90, address="2 Far Rd")], s)
+    res = _run(stops, s, trucks=1)
+    assert not res.plan.violations
+    truck = res.plan.used_trucks[0]
+    first = truck.loads[0].stops[0]
+    assert next(x for x in stops if x.stop_id == first.stop_id).address == "1 Near Rd"
+    assert clock(first.arrive_s) == "8:00 AM"
+    # start = 08:00 - 90 min loading - drive to the near stop: after 06:00
+    assert 6 * 3600 <= truck.start_s < 6.5 * 3600
+    assert abs(truck.on_duty_minutes - (truck.loads[-1].return_s - truck.start_s) / 60) < 0.1

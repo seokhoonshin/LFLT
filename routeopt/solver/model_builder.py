@@ -112,7 +112,14 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
     n_trucks = len(inputs.trucks)
     slots = vehicle_layout(stops, settings, n_trucks)
     n_vehicles = len(slots)
-    horizon = settings.on_duty_seconds
+    # Solver time 0 = settings.model_origin_s.  With a floating start (CA) that is the
+    # earliest possible driver start; each truck's start is a variable, its day is capped
+    # at on_duty from that start, and starting before shift_start (offset) costs a little.
+    offset = settings.model_offset_s
+    first_rel = settings.earliest_delivery_rel_s
+    floating = settings.floating
+    latest_start = offset + max(0, first_rel - settings.first_load_seconds) if floating else 0
+    horizon = latest_start + settings.on_duty_seconds
     cap = settings.volume_cap_tenths
     pallet_cap = settings.pallet_cap_tenths if settings.pallet_cap_tenths is not None else cap
     vehicle_caps = [pallet_cap if s.pallet else cap for s in slots]
@@ -175,10 +182,9 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
         for node in range(n_dep, n_nodes):
             index = manager.NodeToIndex(node)
             solver.Add(dep_dim.CumulVar(index) == time_dim.CumulVar(index))
-    first_rel = settings.earliest_delivery_rel_s
     if first_rel:
         for node in range(n_dep, n_nodes):
-            time_dim.CumulVar(manager.NodeToIndex(node)).SetMin(first_rel)
+            time_dim.CumulVar(manager.NodeToIndex(node)).SetMin(offset + first_rel)
 
     def active(v: int) -> Any:
         return routing.ActiveVehicleVar(v)
@@ -189,14 +195,60 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
         if dep_dim is not None:
             solver.Add(dep_dim.CumulVar(start) == time_dim.CumulVar(start))
         if s.slot == 1:
-            time_dim.CumulVar(start).SetRange(0, 0)
-        routing.AddVariableMinimizedByFinalizer(time_dim.CumulVar(start))
+            time_dim.CumulVar(start).SetRange(0, latest_start)
+        if not (s.slot == 1 and floating):
+            routing.AddVariableMinimizedByFinalizer(time_dim.CumulVar(start))
         routing.AddVariableMinimizedByFinalizer(time_dim.CumulVar(end))
         if disabled_trucks and s.truck_index in disabled_trucks:
             solver.Add(active(s.vehicle) == 0)
-    if dep_dim is not None:  # report the earliest arrivals, as the timeline engine does
+    if dep_dim is not None or floating:  # report the earliest arrivals, as the timeline does
         for node in range(n_dep, n_nodes):
             routing.AddVariableMinimizedByFinalizer(time_dim.CumulVar(manager.NodeToIndex(node)))
+    if floating:  # then start each driver as late as those arrivals allow (no idle wait)
+        for s in slots:
+            if s.slot == 1:
+                routing.AddVariableMaximizedByFinalizer(time_dim.CumulVar(routing.Start(s.vehicle)))
+    if floating:
+        for t in range(n_trucks):
+            firsts = [s.vehicle for s in slots if s.truck_index == t and s.slot == 1]
+            if not firsts:
+                continue
+            day_start = time_dim.CumulVar(routing.Start(firsts[0]))
+            for v in firsts[1:]:  # one driver start per truck, whichever site loads first
+                solver.Add(time_dim.CumulVar(routing.Start(v)) == day_start)
+            for s in slots:  # every turn ends within on-duty hours of the driver start
+                if s.truck_index == t:
+                    solver.Add(
+                        time_dim.CumulVar(routing.End(s.vehicle))
+                        <= day_start + settings.on_duty_seconds
+                    )
+            if offset and settings.early_start_cost:
+                time_dim.SetCumulVarSoftLowerBound(
+                    routing.Start(firsts[0]), offset, settings.early_start_cost
+                )
+        # The driver starts exactly so the first stop is reached at the first appointment:
+        # start = appointment - first loading - drive to that stop (never before time 0,
+        # the earliest start).  No waiting on the first arc, and the start is capped by the
+        # value for whichever stop comes first; the minimum delivery time does the rest.
+        appointment = offset + first_rel
+        n_index = routing.Size() + n_vehicles
+        for s in slots:
+            if s.slot != 1:
+                continue
+            start_index = routing.Start(s.vehicle)
+            time_dim.SlackVar(start_index).SetValue(0)
+            bounds = [latest_start] * n_index
+            for index in range(routing.Size()):
+                node = manager.IndexToNode(index)
+                if node >= n_dep:
+                    bounds[index] = max(
+                        0,
+                        appointment - settings.first_load_seconds - travel[depots[s.vehicle]][node],
+                    )
+            solver.Add(
+                time_dim.CumulVar(start_index)
+                <= solver.Element(bounds, routing.NextVar(start_index))
+            )
     for t in range(n_trucks):
         for k in range(1, k_slots + 1):
             group = [s.vehicle for s in slots if s.truck_index == t and s.slot == k]
@@ -402,7 +454,9 @@ def _add_lunch(
     if lunch_s <= 0 or settings.lunch_mode == "smart":
         return {}
     earliest, latest = settings.lunch_window_rel()
-    horizon = settings.on_duty_seconds
+    offset = settings.model_offset_s  # solver time 0 is model_origin_s, not shift start
+    earliest, latest = earliest + offset, latest + offset
+    horizon = offset + 2 * settings.on_duty_seconds
     breaks: dict[int, Any] = {}
     for s in slots:
         if s.slot != 1:

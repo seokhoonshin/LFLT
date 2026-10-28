@@ -54,7 +54,7 @@ REDUCTION_SHARE = 0.2
 
 @dataclass
 class RawRoute:
-    """One virtual vehicle's route: stop nodes in order plus solver times (seconds from shift start)."""
+    """One virtual vehicle's route: stop nodes in order plus solver times (seconds from settings.model_origin_s)."""
 
     vehicle: int
     truck_index: int
@@ -64,7 +64,7 @@ class RawRoute:
     arrivals: list[int]  # solver cumul (min) at each stop
     start_cumul: int
     end_cumul: int
-    break_start: int | None = None  # relative to shift start, if a break is performed
+    break_start: int | None = None  # solver time (from model_origin_s), if a break is performed
 
 
 @dataclass

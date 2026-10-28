@@ -198,6 +198,18 @@ def export_excel(
     _kv_sheet(ws, rows)
 
     # ---- Routes (one row per shipment) --------------------------------------------
+    # ---- Load summary (TMS load-list layout) ----------------------------------------
+    from routeopt.export.load_summary import COLUMNS, TIME_COLUMNS, load_summary_rows
+
+    ws = wb.create_sheet("Load Summary")
+    summary_rows = load_summary_rows(plan, stops, settings)
+    _write_table(ws, COLUMNS, [[r[c] for c in COLUMNS] for r in summary_rows])
+    for c in TIME_COLUMNS:
+        col = COLUMNS.index(c) + 1
+        for r in range(2, ws.max_row + 1):
+            ws.cell(row=r, column=col).number_format = "m/d/yyyy h:mm"
+        ws.column_dimensions[get_column_letter(col)].width = 17
+
     ws = wb.create_sheet("Routes")
     route_rows: list[list[Any]] = []
     for truck in plan.trucks:
@@ -266,6 +278,7 @@ def export_excel(
         "depart",
         "travel_min_from_prev",
         "dist_mi_from_prev",
+        "stop_volume",
         "volume_on_arrival",
         "volume_after",
         "weight_after",
@@ -301,6 +314,7 @@ def export_excel(
                         _t(visit.depart_s),
                         visit.travel_min_from_prev,
                         visit.dist_mi_from_prev,
+                        round(visit.volume_on_arrival - visit.volume_after, 1),
                         visit.volume_on_arrival,
                         visit.volume_after,
                         visit.weight_after,
@@ -410,6 +424,7 @@ def export_excel(
         "loads",
         "stops",
         "on_duty_minutes",
+        "driver_start",
         "first_depart",
         "last_return",
         "lunch",
@@ -431,6 +446,7 @@ def export_excel(
                 len(loads),
                 sum(len(load.stops) for load in loads),
                 truck.on_duty_minutes,
+                _t(truck.start_s) if loads and truck.start_s is not None else None,
                 _t(loads[0].depart_s) if loads else None,
                 _t(loads[-1].return_s) if loads else None,
                 truck.lunch.where,
@@ -440,7 +456,7 @@ def export_excel(
                 round(sum(utils) / len(utils), 1) if utils else 0.0,
             ]
         )
-    _write_table(ws, truck_headers, truck_rows, {"first_depart", "last_return"})
+    _write_table(ws, truck_headers, truck_rows, {"driver_start", "first_depart", "last_return"})
 
     # ---- Settings ------------------------------------------------------------------------
     ws = wb.create_sheet("Settings")

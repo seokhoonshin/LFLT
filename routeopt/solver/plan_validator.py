@@ -51,7 +51,9 @@ def check_truck(
                 code="on_duty",
                 truck=number,
                 message=(
-                    f"On duty {truck.on_duty_minutes:.0f} min (returns {clock(loads[-1].return_s)}) "
+                    f"On duty {truck.on_duty_minutes:.0f} min "
+                    f"({clock(truck.start_s if truck.start_s is not None else settings.shift_start_s)}"
+                    f" - {clock(loads[-1].return_s)}) "
                     f"exceeds the {limit_min:.0f}-min limit."
                 ),
             )
@@ -150,7 +152,9 @@ def check_truck(
     elif lunch.kind == "break" and lunch.start_s is not None and lunch.end_s is not None:
         duration_ok = lunch.end_s - lunch.start_s >= settings.lunch_seconds - 1
         inside_day = (
-            lunch.start_s >= settings.shift_start_s and lunch.end_s <= loads[-1].return_s + 1
+            lunch.start_s
+            >= (truck.start_s if truck.start_s is not None else settings.shift_start_s)
+            and lunch.end_s <= loads[-1].return_s + 1
         )
         overlaps = any(
             visit.arrive_s < lunch.end_s and lunch.start_s < visit.depart_s

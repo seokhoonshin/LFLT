@@ -3,8 +3,10 @@
 Given the *structure* of a truck's day (ordered stop ids per load, where lunch goes) this
 module rebuilds every clock time and every volume reading with plain arithmetic:
 
-* depart at ``shift_start``; travel; service + buffer at each stop; ``reload_minutes``
-  between loads; lunch either during a reload or as an explicit gap on one arc;
+* the driver starts at ``shift_start`` - or, when the start floats (CA), at the first
+  appointment minus the first loading minus the drive to the first stop - then travels;
+  service + buffer at each stop; ``reload_minutes`` between loads; lunch either during a
+  reload or as an explicit gap on one arc;
 * load-out = sum of delivery volume of the load's stops; after each stop: - LMD + RTN.
 
 All times are seconds since midnight of D.  This is deliberately independent of OR-Tools.
@@ -69,6 +71,29 @@ def turn_departure(
     if last_delivery is not None and settings.turn_gap_seconds:
         depart = max(depart, last_delivery + settings.turn_gap_seconds)
     return depart, reload_start, deadhead
+
+
+def truck_start(
+    loads: list[list[str]],
+    stops_by_id: dict[str, Stop],
+    matrix: Matrix,
+    node_of: dict[str, int],
+    settings: RunSettings,
+) -> int:
+    """When the driver starts (seconds since midnight).
+
+    Fixed at ``shift_start`` unless the start floats: then the truck reaches its first stop
+    at the first appointment time, i.e. start = appointment - first loading - drive to the
+    first stop, never before ``earliest_shift_start`` (a far first stop is then reached
+    later).
+    """
+    if not settings.floating or not loads or not loads[0]:
+        return settings.shift_start_s
+    first = loads[0][0]
+    depot = site_node(load_site(loads[0], stops_by_id))
+    drive = matrix.duration(depot, node_of[first])
+    appointment = settings.shift_start_s + settings.earliest_delivery_rel_s
+    return max(settings.earliest_shift_start_s, appointment - settings.first_load_seconds - drive)
 
 
 def wait_for_appointment(arrive: int, settings: RunSettings) -> int:
@@ -184,7 +209,8 @@ def build_truck(
 
     lunch_s = settings.lunch_seconds
     plan_loads: list[Load] = []
-    t = settings.shift_start_s
+    start_s = truck_start(loads, stops_by_id, matrix, node_of, settings)
+    t = start_s
     lunch_start_actual: int | None = None
     lunch_end_actual: int | None = None
     lunch_where = ""
@@ -339,11 +365,12 @@ def build_truck(
         lunch_info.where = (
             f"{lunch_info.where} ({clock(lunch_info.start_s)}-{clock(lunch_info.end_s)})"
         )
-    on_duty = (plan_loads[-1].return_s - settings.shift_start_s) / 60
+    on_duty = (plan_loads[-1].return_s - start_s) / 60
     return PlanTruck(
         number=skeleton.truck_number,
         driver_name=skeleton.driver_name,
         on_duty_minutes=round(on_duty, 1),
+        start_s=start_s,
         lunch=lunch_info,
         loads=plan_loads,
     )
@@ -359,7 +386,7 @@ def _departures_without_lunch(
     """Per load: departure times (hub, then each stop) and the travel time of each arc."""
     departs_out: list[list[int]] = []
     travels_out: list[list[int]] = []
-    t = settings.shift_start_s
+    t = truck_start(loads, stops_by_id, matrix, node_of, settings)
     prev_site: str | None = None
     last_delivery: int | None = None
     for load_idx, stop_ids in enumerate(loads, start=1):
