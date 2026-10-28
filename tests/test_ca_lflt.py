@@ -195,6 +195,9 @@ def test_ca_upload_columns() -> None:
     assert (a.site, a.pallet_required, a.priority) == ("LGC8", True, 1)
     assert (b.site, b.origin_dc, b.priority) == ("LGC7", "LGC7", 2)
     assert a.shipment_type.value == "LMD" and a.weight_lb == 0 and a.pieces == 1
+    # default: the priority column is ignored, every candidate is alike
+    assert {x.tier for x in consolidate([a, b], s).stops} == {2}
+    s = s.model_copy(update={"use_priority": True})
     stops = consolidate([a, b], s).stops
     by_site = {x.site: x for x in stops}
     assert by_site["LGC8"].tier == 1 and by_site["LGC8"].pallet
@@ -287,6 +290,9 @@ def test_stop_penalty_scales_priority_2_by_volume() -> None:
     s = _ca()
     assert s.stop_penalty(2, 300) == 4 * s.penalty_for_tier(2)
     assert s.stop_penalty(1, 0) > s.stop_penalty(2, 800)
+    assert s.stop_penalty(1, 300) == 4 * s.penalty_for_tier(1)  # tier 1 counts volume too
+    tight = _ca(volume_value_cuft=10)
+    assert tight.stop_penalty(2, 800) < tight.stop_penalty(1, 0)  # capped below tier 1
     assert _ca(volume_value_cuft=None).stop_penalty(2, 300) == s.penalty_for_tier(2)
 
 

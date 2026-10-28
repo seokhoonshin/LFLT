@@ -486,6 +486,11 @@ with st.expander("Advanced settings", expanded=False):
         disabled=not floating_start,
         help=TIP["late_first_stop_cost"],
     )
+    use_priority = g4.checkbox(
+        dl("Priority 1 first (existing LFLT loads)", "use_priority"),
+        value=defaults.use_priority,
+        help=TIP["use_priority"],
+    )
     volume_value = g4.number_input(
         dl("Volume value (cu ft = 1 stop)", "volume_value_cuft"),
         0.0,
@@ -607,6 +612,7 @@ try:
         same_location_travel_minutes=int(same_location_minutes),
         stop_transit_minutes=int(stop_transit),
         volume_value_cuft=float(volume_value) or None,
+        use_priority=bool(use_priority),
         traffic_factor=float(traffic_factor),
         traffic_depart_time=traffic_depart,
         truck_length_ft=float(truck_length),

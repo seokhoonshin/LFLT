@@ -114,7 +114,8 @@ def build_stop(stop_id: str, key: str, shipments: list[Shipment], settings: RunS
     priorities = [s.priority for s in shipments if s.priority is not None]
     tier = stop_tier(day_tag, order_types)
     if priorities and day_tag == DayTag.D:
-        tier = min(priorities)  # CA: priority 1 existing LFLT, 2 add-on, 3 low
+        # CA: priority 1 existing LFLT, 2 add-on, 3 low; or every candidate alike
+        tier = min(priorities) if settings.use_priority else 2
     return Stop(
         stop_id=stop_id,
         key=key,
