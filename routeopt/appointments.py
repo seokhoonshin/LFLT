@@ -9,6 +9,7 @@ Rows are kept as history, so the confirmed and declined share can be tracked ove
 from __future__ import annotations
 
 import io
+import re
 from typing import Any
 
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
@@ -293,3 +294,92 @@ def export_stops_by_load(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def manual_rows(
+    load_rows: list[dict[str, Any]],
+    stops: list[Stop],
+    shipment_ids: str,
+    *,
+    manual: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Rows that add a stop to the load whose rows are ``load_rows`` (one truck, one load,
+    one stage).  ``shipment_ids`` = one or more IDs (comma / space separated); each brings
+    its whole stop from the run's upload (every shipment at that address, details copied).
+    A stop the load already has is filled up; otherwise it becomes the new last stop.  A
+    shipment that is not in the upload needs ``manual`` (customer, address, volume_cuft,
+    poc) and becomes its own last stop."""
+    if not load_rows:
+        raise ValueError("The load has no rows to add to.")
+    wanted = [x for x in re.split(r"[,\s]+", shipment_ids.strip()) if x]
+    if not wanted:
+        raise ValueError("Enter a shipment ID.")
+    base = load_rows[0]
+    on_load = {r["shipment_id"] for r in load_rows}
+    live = [r for r in load_rows if r["stop_seq"] < 900]
+    last = max((r["stop_seq"] for r in live), default=0)
+    common: dict[str, Any] = {
+        k: base[k] for k in ("run_id", "version", "truck", "load_seq", "delivery_date", "dc")
+    }
+    common |= {
+        "eta": "",
+        "window": "",
+        "miles_from_prev": 0.0,
+        "stop_transit_min": 0.0,
+        "status": STATUSES[0],
+        "note": "added manually",
+        "load_id": next((r["load_id"] for r in load_rows if r.get("load_id")), None),
+        "stage": base.get("stage"),
+    }
+    out: list[dict[str, Any]] = []
+    seq_of: dict[str, int] = {r["stop_id"]: r["stop_seq"] for r in live}
+    done: set[str] = set()
+    for sid in wanted:
+        if sid in on_load or sid in done:
+            continue
+        stop = next((s for s in stops if sid in s.shipment_ids), None)
+        if stop is None:
+            manual = manual or {}
+            if not manual.get("customer") or not manual.get("address"):
+                raise ValueError(
+                    f"{sid} is not in this run's upload: enter its customer and address to add it."
+                )
+            last += 1
+            out.append(
+                common
+                | {
+                    "shipment_id": sid,
+                    "stop_id": f"M-{sid}"[:32],
+                    "stop_seq": last,
+                    "customer": str(manual["customer"]),
+                    "address": str(manual["address"]),
+                    "bill_to_code": None,
+                    "volume_cuft": float(manual.get("volume_cuft") or 0.0),
+                    "poc": str(manual.get("poc") or ""),
+                }
+            )
+            done.add(sid)
+            continue
+        if stop.stop_id not in seq_of:
+            last += 1
+            seq_of[stop.stop_id] = last
+        for sh in stop.shipments:  # the whole stop
+            if sh.shipment_id in on_load or sh.shipment_id in done:
+                continue
+            out.append(
+                common
+                | {
+                    "shipment_id": sh.shipment_id,
+                    "stop_id": stop.stop_id,
+                    "stop_seq": seq_of[stop.stop_id],
+                    "customer": sh.customer_name,
+                    "address": f"{stop.address}, {stop.city} {stop.zip}",
+                    "bill_to_code": sh.bill_to_code,
+                    "volume_cuft": round(sh.volume_cuft, 2),
+                    "poc": stop.contact,
+                }
+            )
+            done.add(sh.shipment_id)
+    if not out:
+        raise ValueError("Everything entered is already on this load.")
+    return out

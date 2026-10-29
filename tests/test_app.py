@@ -116,6 +116,14 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     save = next(b for b in ap.button if b.label.startswith("Save "))
     save.click().run()
     assert not ap.exception, ap.exception
+    # add a stop by hand: a shipment that is not in the upload, typed in
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("MANUAL1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Walk-in Co")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input("1 Test St, Rialto")
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert not ap.exception, ap.exception
+    added = [r for r in db_env.list_appointments() if r["shipment_id"] == "MANUAL1"]
+    assert added and added[0]["customer"] == "Walk-in Co"
     reopt = next(b for b in ap.button if b.label.startswith("Re-optimize "))
     assert not reopt.disabled
     reopt.click().run()

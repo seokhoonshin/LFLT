@@ -312,3 +312,38 @@ def test_replan_leaves_out_declined_and_keeps_the_rest_on_their_truck(tmp_path) 
     # re-optimizing again replaces the re-plan set, it does not pile up
     repo.save_reoptimized(rec.run_id, new_rows)
     assert sum(r["stage"] == "reoptimized" for r in repo.list_appointments()) == len(new_rows)
+
+
+def test_manual_rows_add_the_whole_stop_as_the_last_stop(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import pytest
+    from routeopt.appointments import manual_rows
+
+    from tests.test_ca_lflt import _ship, _stops
+
+    plan, stops, s = _plan(tmp_path)
+    truck = next(t for t in plan.trucks if any(load.stops for load in t.loads))
+    rows = appointment_rows(plan, stops, truck.number)
+    load1 = [r for r in rows if r["load_seq"] == 1]
+    # an extra stop in the upload with two shipments at one address
+    ships = [_ship(30, 200, address="9 Extra Way", volume=v) for v in (11, 22)]
+    ships = [x.model_copy(update={"shipment_id": f"X{int(x.volume_cuft)}"}) for x in ships]
+    extra = _stops(ships, s)
+    extra = [x.model_copy(update={"stop_id": "S900"}) for x in extra]
+    added = manual_rows(load1, stops + extra, " X11 ")
+    assert {r["shipment_id"] for r in added} == {"X11", "X22"}  # the whole stop
+    last = max(r["stop_seq"] for r in load1)
+    assert {r["stop_seq"] for r in added} == {last + 1} and added[0]["stop_id"] == "S900"
+    assert added[0]["status"] == "Not requested" and added[0]["note"] == "added manually"
+    assert sum(r["volume_cuft"] for r in added) == 33
+    with pytest.raises(ValueError, match="already on this load"):
+        manual_rows(load1, stops, load1[0]["shipment_id"])
+    with pytest.raises(ValueError, match="not in this run"):
+        manual_rows(load1, stops, "NOPE123")
+    typed = manual_rows(
+        load1, stops, "NOPE123", manual={"customer": "X", "address": "1 B St", "volume_cuft": 9}
+    )
+    assert typed[0]["customer"] == "X" and typed[0]["stop_seq"] == last + 1
+    repo = Repository(f"sqlite:///{tmp_path / 'm.db'}")
+    repo.init_schema()
+    assert repo.add_appointments(added + typed) == 3
+    assert {r["shipment_id"] for r in repo.list_appointments()} == {"X11", "X22", "NOPE123"}

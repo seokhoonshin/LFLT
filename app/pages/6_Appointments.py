@@ -23,6 +23,7 @@ from routeopt.appointments import (
     appointment_rows,
     export_stops_by_load,
     group_by_stop,
+    manual_rows,
     origin_label,
     outcome_summary,
     stop_outcomes,
@@ -31,7 +32,7 @@ from routeopt.appointments import (
 )
 from routeopt.reoptimize import declined_stop_ids, replan
 
-from _common import get_repo, osrm_status_line, setup_page
+from _common import get_repo, load_record, osrm_status_line, setup_page
 
 setup_page("Appointments")
 osrm_status_line()
@@ -252,6 +253,50 @@ def truck_key(r: dict) -> tuple[str, int, str]:
     return (r["run_id"], r["version"], r["truck"])
 
 
+def add_form(stage: str, run_id: str, truck: str, items: list[dict], load_seqs: list[int]) -> None:
+    """Add a stop to one of the truck's loads: its shipments and details are copied from
+    the run's upload (or typed, for a shipment that was not in it)."""
+    with st.form(f"add-{stage}-{run_id}-{truck}", clear_on_submit=True):
+        a1, a2 = st.columns([2, 1])
+        sid = a1.text_input(
+            "Shipment ID(s)", placeholder="e.g. 3006132464 (several: comma separated)"
+        )
+        load_seq = a2.selectbox("Load", load_seqs, format_func=lambda n: f"Load {n}")
+        st.caption(
+            "Adds the whole stop the shipment belongs to (every shipment at that address in "
+            "the upload; customer, address, volume and POC copied) as the load's last stop. "
+            "Fill the fields below only for a shipment that was not in the upload."
+        )
+        m1, m2, m3, m4 = st.columns([2, 3, 1, 2])
+        customer = m1.text_input("Customer (if not in the upload)")
+        address = m2.text_input("Address (if not in the upload)")
+        volume = m3.number_input("cu ft", 0.0, 2000.0, 0.0, 1.0)
+        poc = m4.text_input("POC")
+        if st.form_submit_button("Add stop as last stop"):
+            try:
+                rec = load_record(run_id)
+                new_rows = manual_rows(
+                    [r for r in items if r["load_seq"] == load_seq],
+                    rec.stops,
+                    sid,
+                    manual={
+                        "customer": customer,
+                        "address": address,
+                        "volume_cuft": volume,
+                        "poc": poc,
+                    },
+                )
+            except (ValueError, LookupError) as exc:
+                st.error(str(exc))
+            else:
+                repo.add_appointments(new_rows)
+                st.toast(
+                    f"{len(new_rows)} shipment(s) added to {truck} load {load_seq} "
+                    f"(stop {new_rows[-1]['stop_seq'] + 1})."
+                )
+                st.rerun()
+
+
 def render(stage_rows: list[dict], stage: str) -> None:
     """Metrics, downloads and the editable tables of one set (original / re-optimized)."""
     counted = group_by_stop(stage_rows) if by_stop else stage_rows
@@ -366,6 +411,8 @@ def render(stage_rows: list[dict], stage: str) -> None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key=f"dl-{stage}-{run_id}-{truck}-{load_seq}",
             )
+        with st.expander(f"Add a stop to {truck} by hand"):
+            add_form(stage, run_id, truck, items, load_seqs)
         if stage != "original":
             continue
         with st.expander(f"Remove {truck} from Appointments"):

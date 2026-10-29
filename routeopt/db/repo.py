@@ -703,6 +703,13 @@ class Repository:
                 ).scalars()
             )
 
+    def add_appointments(self, rows: list[dict[str, Any]]) -> int:
+        """Insert appointment rows (a stop added by hand); returns how many."""
+        with self._sf() as session, session.begin():
+            for row in rows:
+                session.add(AppointmentRow(**row))
+        return len(rows)
+
     def save_reoptimized(self, run_id: str, rows: list[dict[str, Any]]) -> dict[str, int]:
         """Store a re-plan (``appointment_rows`` of the new version, every picked truck) as
         the run's Re-optimized set, replacing an earlier one.  The original rows are not

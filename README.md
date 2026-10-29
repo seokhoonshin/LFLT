@@ -153,7 +153,10 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    re-plans the picked trucks with the declined stops left out, every other stop kept on
    its truck and the run's other candidates (from the original upload) filling the room;
    it is saved as a new version of the run.  A status set in either tab applies to the
-   same shipment in the other.  *Results so far* shows the confirmed / declined share
+   same shipment in the other.  *Add a stop … by hand*: type a shipment ID and the whole
+   stop it belongs to (every shipment at that address in the upload, details copied) is
+   added as the load's last stop; a shipment not in the upload can be typed in.
+   *Results so far* shows the confirmed / declined share
    over any range of days, with a chart per day.  Results also draws one map per load.
 
 ### Command line
