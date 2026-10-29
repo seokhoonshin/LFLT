@@ -128,3 +128,95 @@ def test_group_by_stop_merges_shipments_of_one_stop() -> None:
     assert first["bill_to_code"] == "B1"
     assert first["status"] == "Requested"  # not every shipment is confirmed yet
     assert second["status"] == "Declined" and second["bill_to_code"] is None
+
+
+def _rows_for_export() -> list[dict]:
+    import datetime as dt
+
+    base = {
+        "run_id": "r",
+        "version": 0,
+        "truck": "T01",
+        "load_seq": 1,
+        "delivery_date": dt.date(2026, 11, 2),
+        "address": "1 A St",
+        "eta": "8:00 AM",
+        "window": "",
+        "miles_from_prev": 5.0,
+        "stop_transit_min": 0.0,
+        "poc": "",
+        "dc": "LGC2",
+        "note": "",
+        "bill_to_code": None,
+        "load_id": "19007709",
+        "appt_num": None,
+        "appt_time": None,
+    }
+    return [
+        {**base, "id": 1, "stop_seq": 1, "customer": "A", "shipment_id": "a1",
+         "volume_cuft": 10.0, "status": "Confirmed", "appt_time": "08:00"},
+        {**base, "id": 2, "stop_seq": 1, "customer": "A", "shipment_id": "a2",
+         "volume_cuft": 5.0, "status": "Confirmed", "appt_time": "08:00"},
+        {**base, "id": 3, "stop_seq": 2, "customer": "B", "shipment_id": "b1",
+         "volume_cuft": 7.0, "status": "Declined"},
+        {**base, "id": 4, "stop_seq": 3, "customer": "C", "shipment_id": "c1",
+         "volume_cuft": 3.0, "status": "Requested", "appt_num": "APT-9"},
+    ]  # fmt: skip
+
+
+def test_export_stops_by_load_leaves_out_declined() -> None:
+    import io
+
+    from openpyxl import load_workbook
+    from routeopt.appointments import EXPORT_COLUMNS, export_stops_by_load
+
+    ws = load_workbook(io.BytesIO(export_stops_by_load(_rows_for_export()))).active
+    header = [c.value for c in ws[1]]
+    assert header == [label for _k, label in EXPORT_COLUMNS]
+    assert header[0] == "LOAD ID" and header.index("APPT #") + 2 == header.index("Status")
+    for gone in ("Window", "Bill to", "Stop transit min"):
+        assert gone not in header
+    assert "Origin" in header
+    body = [[c.value for c in row] for row in ws.iter_rows(min_row=2)]
+    col = {h: i for i, h in enumerate(header)}
+    stops = [r for r in body if r[col["Customer"]] != "Load total"]
+    assert [r[col["Customer"]] for r in stops] == ["A", "C"]  # B declined: left out
+    assert [r[col["Stop"]] for r in stops] == [1, 2]  # renumbered
+    assert stops[0][col["Shipment IDs"]] == "a1\na2" and stops[0][col["APPT time"]] == "08:00"
+    assert stops[0][col["Volume"]] == 15.0  # the stop's total
+    assert stops[0][col["Origin"]] == "LGC2 (N1F)" and stops[0][col["LOAD ID"]] == "19007709"
+    total = body[-1]
+    assert total[col["Customer"]] == "Load total" and total[col["Volume"]] == 18.0
+    keep = export_stops_by_load(_rows_for_export(), exclude_declined=False)
+    ws2 = load_workbook(io.BytesIO(keep)).active
+    assert sum(r[col["Customer"]].value == "B" for r in ws2.iter_rows(min_row=2)) == 1
+
+
+def test_old_database_gets_new_appointment_columns(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    con = sqlite3.connect(db)
+    con.execute("create table appointments (id integer primary key, run_id varchar(64))")
+    con.commit()
+    con.close()
+    repo = Repository(f"sqlite:///{db}")
+    repo.init_schema()
+    cols = {r[1] for r in sqlite3.connect(db).execute("pragma table_info(appointments)")}
+    assert {"load_id", "appt_num", "appt_time"} <= cols
+
+
+def test_stop_order_and_appointment_time_are_saved(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    plan, stops, _s = _plan(tmp_path)
+    truck = next(t for t in plan.trucks if any(load.stops for load in t.loads))
+    repo = Repository(f"sqlite:///{tmp_path / 'b.db'}")
+    repo.init_schema()
+    repo.select_truck_for_appointments(appointment_rows(plan, stops, truck.number))
+    rows = repo.list_appointments()
+    first = [r for r in rows if r["stop_seq"] == 1 and r["load_seq"] == rows[0]["load_seq"]]
+    repo.update_appointments(
+        {r["id"]: {"stop_seq": 9, "appt_time": "10:30", "load_id": "123"} for r in first}
+    )
+    again = [r for r in repo.list_appointments() if r["id"] in {x["id"] for x in first}]
+    assert all(r["stop_seq"] == 9 and r["appt_time"] == "10:30" for r in again)
+    assert all(r["load_id"] == "123" for r in again)

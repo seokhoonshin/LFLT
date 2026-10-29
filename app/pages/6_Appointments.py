@@ -10,6 +10,7 @@ for _p in (_APP.parent, _APP):  # repo root (routeopt package) and app/ (_common
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import datetime as dt
 import io
 from itertools import groupby
 
@@ -19,7 +20,9 @@ import streamlit as st
 from routeopt.appointments import (
     OUTCOMES,
     STATUSES,
+    export_stops_by_load,
     group_by_stop,
+    origin_label,
     outcome_summary,
     stop_outcomes,
 )
@@ -133,37 +136,71 @@ m[0].metric("Stops" if by_stop else "Shipments", len(counted))
 for col, status in zip(m[1:], STATUSES, strict=True):
     col.metric(status, sum(r["status"] == status for r in counted))
 
-buf = io.BytesIO()
-export_rows = group_by_stop(day_rows) if by_stop else day_rows
-pd.DataFrame(export_rows).drop(columns=["id", "ids"], errors="ignore").to_excel(
-    buf, index=False, sheet_name="Appointments"
-)
-st.download_button(
-    "Download this day (Excel)",
-    buf.getvalue(),
-    file_name=f"appointments_{day.isoformat()}{'_stops' if by_stop else ''}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+if by_stop:
+    st.download_button(
+        "Download stops by load (Excel)",
+        export_stops_by_load(day_rows),
+        file_name=f"appointments_{day.isoformat()}_by_load.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="One row per stop (its shipment IDs in one cell), a total row per load. "
+        "Declined stops are left out and the rest are numbered 1..n.",
+    )
+else:
+    buf = io.BytesIO()
+    pd.DataFrame(day_rows).drop(columns=["id"]).to_excel(
+        buf, index=False, sheet_name="Appointments"
+    )
+    st.download_button(
+        "Download this day (Excel)",
+        buf.getvalue(),
+        file_name=f"appointments_{day.isoformat()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
-TAIL = {
-    "customer": "Customer",
+# Load ID first, then the stop, its origin, APPT # and Status / Note (on screen without
+# scrolling), then the details
+COLUMNS = {"load_id": "Load ID", "stop_seq": "Stop", "origin": "Origin"}
+COLUMNS |= {"appt_num": "APPT #", "appt_time": "APPT time", "status": "Status", "note": "Note"}
+COLUMNS |= {"customer": "Customer"}
+if by_stop:
+    COLUMNS |= {"shipments": "Shipments", "shipment_ids": "Shipment IDs"}
+else:
+    COLUMNS |= {"shipment_id": "Shipment ID"}
+COLUMNS |= {
     "address": "Address",
-    "bill_to_code": "Bill to",
     "delivery_date": "Suggested date",
     "eta": "ETA",
-    "window": "Window",
-    "volume_cuft": "Volume",
+    "stop_volume": "Volume",  # the stop's total, in both views
     "miles_from_prev": "Miles from prev",
-    "stop_transit_min": "Stop transit min",
     "poc": "POC",
 }
-# Status and Note right after the stop number so they are on screen without scrolling
-COLUMNS = {"stop_seq": "Stop", "status": "Status", "note": "Note"}
+# by stop the order can be changed too (type the new stop numbers, then Save)
+EDITABLE = ("Load ID", "APPT #", "APPT time", "Status", "Note")
 if by_stop:
-    COLUMNS |= {"customer": "Customer", "shipments": "Shipments", "shipment_ids": "Shipment IDs"}
-else:
-    COLUMNS |= {"customer": "Customer", "shipment_id": "Shipment ID"}
-COLUMNS |= TAIL
+    EDITABLE = ("Stop", *EDITABLE)
+
+
+def _clean(v: object) -> str | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    return str(v).strip() or None
+
+
+def _to_time(v: object) -> dt.time | None:
+    if not v or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        return dt.datetime.strptime(str(v), "%H:%M").time()
+    except ValueError:
+        return None
+
+
+def _from_time(v: object) -> str | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
+        return None
+    if isinstance(v, str):
+        return v[:5] or None
+    return v.strftime("%H:%M")  # type: ignore[attr-defined]
 
 
 def truck_key(r: dict) -> tuple[str, int, str]:
@@ -180,23 +217,49 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
         + (f" · {declined} declined" if declined else "")
     )
     st.caption(
-        f"Run {run_id} · v{version} · from {items[0]['dc']} · "
+        f"Run {run_id} · v{version} · from {origin_label(items[0]['dc'])} · "
         f"{len(stops_here)} stops, {len(items)} shipments"
     )
-    shown = stops_here if by_stop else items
+    stop_vol = {(s["load_seq"], s["stop_seq"]): s["volume_cuft"] for s in stops_here}
+    shown = [
+        {**r, "stop_volume": stop_vol[(r["load_seq"], r["stop_seq"])]}
+        for r in (stops_here if by_stop else items)
+    ]
     with st.form(f"form-{run_id}-{truck}"):
         edited: list[tuple[pd.DataFrame, list[list[int]]]] = []
         for load_seq, load_items in groupby(shown, key=lambda r: r["load_seq"]):
-            load_items = list(load_items)
-            st.markdown(f"**Load {load_seq}** — {load_items[0]['dc']}")
+            load_items = [{**r, "origin": origin_label(r["dc"])} for r in load_items]
+            st.markdown(
+                f"**Load {load_seq}** — {origin_label(load_items[0]['dc'])} · "
+                f"{sum(r['volume_cuft'] for r in load_items):,.1f} cu ft"
+            )
             df = pd.DataFrame(load_items)[list(COLUMNS)].rename(columns=COLUMNS)
+            df["APPT time"] = [_to_time(v) for v in df["APPT time"]]
             ids = [r["ids"] if by_stop else [r["id"]] for r in load_items]
             out = st.data_editor(
                 df,
                 hide_index=True,
                 use_container_width=True,
-                disabled=[c for c in COLUMNS.values() if c not in ("Status", "Note")],
+                disabled=[c for c in COLUMNS.values() if c not in EDITABLE],
                 column_config={
+                    "Stop": st.column_config.NumberColumn(
+                        "Stop",
+                        min_value=1,
+                        step=1,
+                        help="Type a new number to change the stop order (by-stop view).",
+                    ),
+                    "Load ID": st.column_config.TextColumn(
+                        "Load ID",
+                        help="TMS load number. Type it on one stop and Save: the load's "
+                        "other empty stops get the same number.",
+                    ),
+                    "APPT #": st.column_config.TextColumn("APPT #"),
+                    "APPT time": st.column_config.TimeColumn(
+                        "APPT time",
+                        format="h:mm a",
+                        step=300,
+                        help="The confirmed appointment time (the plan's ETA is in ETA).",
+                    ),
                     "Status": st.column_config.SelectboxColumn(
                         "Status",
                         options=STATUSES,
@@ -213,12 +276,34 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
             )
             edited.append((out.reset_index(drop=True), ids))
         if st.form_submit_button(f"Save {truck}", type="primary"):
-            changes = {
-                int(row_id): {"status": str(r["Status"]), "note": str(r["Note"] or "")}
-                for frame, ids in edited
-                for (_i, r), row_ids in zip(frame.iterrows(), ids, strict=True)
-                for row_id in row_ids
-            }
+            changes: dict[int, dict[str, object]] = {}
+            for frame, ids in edited:
+                records = list(zip(frame.to_dict("records"), ids, strict=True))
+                typed = {
+                    str(r["Load ID"]).strip()
+                    for r, _ids in records
+                    if r["Load ID"] and str(r["Load ID"]).strip() and str(r["Load ID"]) != "nan"
+                }
+                fill = typed.pop() if len(typed) == 1 else None  # one number -> whole load
+                # new stop order: by the typed number, ties keep the old order; then 1..n
+                order = sorted(
+                    range(len(records)),
+                    key=lambda i: (float(records[i][0]["Stop"] or 0), i),
+                )
+                new_seq = {i: pos + 1 for pos, i in enumerate(order)}
+                for i, (r, row_ids) in enumerate(records):
+                    appt = str(r["APPT #"]).strip() if r["APPT #"] else ""
+                    values: dict[str, object] = {
+                        "status": str(r["Status"]),
+                        "note": str(r["Note"] or ""),
+                        "appt_num": appt or None,
+                        "appt_time": _from_time(r["APPT time"]),
+                        "load_id": _clean(r["Load ID"]) or fill,
+                    }
+                    if by_stop:
+                        values["stop_seq"] = new_seq[i]
+                    for row_id in row_ids:
+                        changes[int(row_id)] = values
             n = repo.update_appointments(changes)
             st.toast(f"{truck}: {n} change(s) saved.")
             st.rerun()

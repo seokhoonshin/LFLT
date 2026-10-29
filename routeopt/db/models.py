@@ -245,5 +245,8 @@ class AppointmentRow(Base):
     dc: Mapped[str] = mapped_column(String(16), default="")
     status: Mapped[str] = mapped_column(String(16), default="Not requested")
     note: Mapped[str] = mapped_column(Text, default="")
+    load_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # TMS load number
+    appt_num: Mapped[str | None] = mapped_column(String(64), nullable=True)  # appointment #
+    appt_time: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "HH:MM" set
     selected_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

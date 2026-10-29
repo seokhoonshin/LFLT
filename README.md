@@ -142,9 +142,12 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
 5. **History** — every run and version: open, re-export, compare two runs' KPIs, download
    the original upload, soft-delete/restore.
 6. **Appointments** — the trucks picked with **Select this truck** on Results, one row per
-   shipment (stop, shipment ID, customer, address, bill-to, suggested date, ETA, volume,
-   miles, stops-in-transit minutes, POC).  Set each status (Not requested / Requested /
-   Pending / Confirmed / Declined) and a note, press **Save**; download a day as Excel.
+   stop (shipments to one stop merged; *By shipment* shows them one by one): Load ID,
+   stop, origin, APPT #, APPT time, status, note, customer, shipment IDs, address,
+   suggested date, ETA, stop volume, miles, POC.  Load ID, stop order, APPT #, APPT time,
+   status (Not requested / Requested / Pending / Confirmed / Declined) and note are
+   editable; press **Save**.  *Download stops by load* gives one row per stop (its
+   shipment IDs in one cell) with a total row per load; declined stops are left out.
    The rows are kept as history: *Results so far* shows, over any range of delivery days,
    how many picked stops were confirmed, declined (the customer couldn't take it that
    day) or are still open, as counts, % of stops and % of cu ft, with a chart per day.

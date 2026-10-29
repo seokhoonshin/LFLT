@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -201,8 +201,21 @@ class Repository:
 
     # ---- schema ---------------------------------------------------------------------
     def init_schema(self) -> None:
-        """Create all tables (idempotent)."""
+        """Create all tables (idempotent), and add columns introduced after a table was
+        first created (nullable ones only), so an existing database keeps working."""
         Base.metadata.create_all(self.engine)
+        insp = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                if not insp.has_table(table.name):
+                    continue
+                have = {c["name"] for c in insp.get_columns(table.name)}
+                for col in table.columns:
+                    if col.name not in have and col.nullable:
+                        kind = col.type.compile(dialect=self.engine.dialect)
+                        conn.execute(
+                            text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {kind}')
+                        )
 
     # ---- trucks ---------------------------------------------------------------------
     def list_trucks(self) -> list[TruckConfig]:
@@ -696,15 +709,16 @@ class Repository:
             ).scalars()
             return [{c: getattr(r, c) for c in cols} for r in rows]
 
-    def update_appointments(self, changes: dict[int, dict[str, str]]) -> int:
-        """Set status / note by row id; returns the number of rows changed."""
+    def update_appointments(self, changes: dict[int, dict[str, Any]]) -> int:
+        """Set status / note / load id / appointment # / stop order by row id; returns the
+        number of values changed."""
         n = 0
         with self._sf() as session, session.begin():
             for row_id, values in changes.items():
                 r = session.get(AppointmentRow, row_id)
                 if r is None:
                     continue
-                for key in ("status", "note"):
+                for key in ("status", "note", "load_id", "appt_num", "appt_time", "stop_seq"):
                     if key in values and getattr(r, key) != values[key]:
                         setattr(r, key, values[key])
                         n += 1
