@@ -11,13 +11,13 @@ for _p in (_APP.parent, _APP):  # repo root (routeopt package) and app/ (_common
         sys.path.insert(0, str(_p))
 
 import datetime as dt
-import io
 from itertools import groupby
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 from routeopt.appointments import (
+    EXPORT_COLUMNS,
     OUTCOMES,
     STATUSES,
     export_stops_by_load,
@@ -25,6 +25,8 @@ from routeopt.appointments import (
     origin_label,
     outcome_summary,
     stop_outcomes,
+    warehouse_address,
+    warehouse_label,
 )
 
 from _common import get_repo, osrm_status_line, setup_page
@@ -136,48 +138,65 @@ m[0].metric("Stops" if by_stop else "Shipments", len(counted))
 for col, status in zip(m[1:], STATUSES, strict=True):
     col.metric(status, sum(r["status"] == status for r in counted))
 
-if by_stop:
-    st.download_button(
-        "Download stops by load (Excel)",
-        export_stops_by_load(day_rows),
-        file_name=f"appointments_{day.isoformat()}_by_load.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="One row per stop (its shipment IDs in one cell), a total row per load. "
-        "Declined stops are left out and the rest are numbered 1..n.",
-    )
-else:
-    buf = io.BytesIO()
-    pd.DataFrame(day_rows).drop(columns=["id"]).to_excel(
-        buf, index=False, sheet_name="Appointments"
-    )
-    st.download_button(
-        "Download this day (Excel)",
-        buf.getvalue(),
-        file_name=f"appointments_{day.isoformat()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+st.download_button(
+    "Download all loads of this day (Excel)",
+    export_stops_by_load(day_rows),
+    file_name=f"appointments_{day.isoformat()}_all_loads.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    help="Per load: the warehouse as stop 1 (load total volume), then its stops. "
+    "Declined stops are left out. Each load also has its own button below.",
+)
 
-# Load ID first, then the stop, its origin, APPT # and Status / Note (on screen without
-# scrolling), then the details
-COLUMNS = {"load_id": "Load ID", "stop_seq": "Stop", "origin": "Origin"}
-COLUMNS |= {"appt_num": "APPT #", "appt_time": "APPT time", "status": "Status", "note": "Note"}
-COLUMNS |= {"customer": "Customer"}
+# on screen: the export columns, then shipments and status
+LABELS = [*EXPORT_COLUMNS, "Shipments", "Shipment IDs", "Status"]
+EDITABLE = ("load ID", "APPT time", "APPT #", "Note", "Status")
 if by_stop:
-    COLUMNS |= {"shipments": "Shipments", "shipment_ids": "Shipment IDs"}
-else:
-    COLUMNS |= {"shipment_id": "Shipment ID"}
-COLUMNS |= {
-    "address": "Address",
-    "delivery_date": "Suggested date",
-    "eta": "ETA",
-    "stop_volume": "Volume",  # the stop's total, in both views
-    "miles_from_prev": "Miles from prev",
-    "poc": "POC",
-}
-# by stop the order can be changed too (type the new stop numbers, then Save)
-EDITABLE = ("Load ID", "APPT #", "APPT time", "Status", "Note")
-if by_stop:
-    EDITABLE = ("Stop", *EDITABLE)
+    EDITABLE = ("Stop", *EDITABLE)  # the order can be changed too (type new numbers)
+
+
+def table_rows(load_items: list[dict]) -> list[dict]:
+    """The warehouse (stop 1) and then the stops, with the on-screen labels."""
+    first = load_items[0]
+    load_id = next((r["load_id"] for r in load_items if r.get("load_id")), None)
+    total = sum(r["stop_volume"] for r in {(r["stop_seq"]): r for r in load_items}.values())
+    out = [
+        {
+            "load ID": load_id,
+            "Stop": 1,
+            "date": first["delivery_date"],
+            "APPT time": None,
+            "APPT #": None,
+            "Customer": warehouse_label(first["dc"]),
+            "Address": warehouse_address(first["dc"]),
+            "Volume": f"Load total volume : {total:,.1f}",
+            "Miles from prev": None,
+            "POC": None,
+            "Note": None,
+            "Shipments": None,
+            "Shipment IDs": None,
+            "Status": None,
+        }
+    ]
+    for r in load_items:
+        out.append(
+            {
+                "load ID": r.get("load_id"),
+                "Stop": r["stop_seq"] + 1,
+                "date": r["delivery_date"],
+                "APPT time": _to_time(r.get("appt_time")),
+                "APPT #": r.get("appt_num"),
+                "Customer": r["customer"],
+                "Address": r["address"],
+                "Volume": f"{r['stop_volume']:,.1f}",
+                "Miles from prev": r["miles_from_prev"],
+                "POC": r["poc"],
+                "Note": r["note"],
+                "Shipments": r["shipments"] if by_stop else 1,
+                "Shipment IDs": r["shipment_ids"] if by_stop else r["shipment_id"],
+                "Status": r["status"],
+            }
+        )
+    return out
 
 
 def _clean(v: object) -> str | None:
@@ -227,50 +246,43 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
     ]
     with st.form(f"form-{run_id}-{truck}"):
         edited: list[tuple[pd.DataFrame, list[list[int]]]] = []
+        load_seqs: list[int] = []
         for load_seq, load_items in groupby(shown, key=lambda r: r["load_seq"]):
-            load_items = [{**r, "origin": origin_label(r["dc"])} for r in load_items]
-            st.markdown(
-                f"**Load {load_seq}** — {origin_label(load_items[0]['dc'])} · "
-                f"{sum(r['volume_cuft'] for r in load_items):,.1f} cu ft"
-            )
-            df = pd.DataFrame(load_items)[list(COLUMNS)].rename(columns=COLUMNS)
-            df["APPT time"] = [_to_time(v) for v in df["APPT time"]]
-            ids = [r["ids"] if by_stop else [r["id"]] for r in load_items]
+            load_items = list(load_items)
+            load_seqs.append(load_seq)
+            st.markdown(f"**Load {load_seq}** — from {origin_label(load_items[0]['dc'])}")
+            df = pd.DataFrame(table_rows(load_items), columns=LABELS)
+            ids = [[]] + [r["ids"] if by_stop else [r["id"]] for r in load_items]
             out = st.data_editor(
                 df,
                 hide_index=True,
                 use_container_width=True,
-                disabled=[c for c in COLUMNS.values() if c not in EDITABLE],
+                disabled=[c for c in LABELS if c not in EDITABLE],
                 column_config={
+                    "load ID": st.column_config.TextColumn(
+                        "load ID",
+                        help="TMS load number. Type it once (any row) and Save: the load's "
+                        "empty rows get the same number.",
+                    ),
                     "Stop": st.column_config.NumberColumn(
                         "Stop",
-                        min_value=1,
+                        min_value=2,
                         step=1,
-                        help="Type a new number to change the stop order (by-stop view).",
+                        help="Stop 1 is the warehouse. Type new numbers to change the order "
+                        "of the stops (by-stop view), then Save.",
                     ),
-                    "Load ID": st.column_config.TextColumn(
-                        "Load ID",
-                        help="TMS load number. Type it on one stop and Save: the load's "
-                        "other empty stops get the same number.",
+                    "date": st.column_config.DateColumn("date", format="MM/DD/YYYY"),
+                    "APPT time": st.column_config.TimeColumn(
+                        "APPT time", format="h:mm a", step=300
                     ),
                     "APPT #": st.column_config.TextColumn("APPT #"),
-                    "APPT time": st.column_config.TimeColumn(
-                        "APPT time",
-                        format="h:mm a",
-                        step=300,
-                        help="The confirmed appointment time (the plan's ETA is in ETA).",
-                    ),
+                    "Note": st.column_config.TextColumn("Note"),
+                    "Shipment IDs": st.column_config.TextColumn("Shipment IDs", width="medium"),
                     "Status": st.column_config.SelectboxColumn(
                         "Status",
                         options=STATUSES,
-                        required=True,
                         help="Declined = the customer can't take it that day (dropped).",
                     ),
-                    "Note": st.column_config.TextColumn("Note"),
-                    "Suggested date": st.column_config.DateColumn(
-                        "Suggested date", format="MM/DD/YYYY"
-                    ),
-                    "Shipment IDs": st.column_config.TextColumn("Shipment IDs", width="medium"),
                 },
                 key=f"ed-{view}-{run_id}-{truck}-{load_seq}",
             )
@@ -279,26 +291,22 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
             changes: dict[int, dict[str, object]] = {}
             for frame, ids in edited:
                 records = list(zip(frame.to_dict("records"), ids, strict=True))
-                typed = {
-                    str(r["Load ID"]).strip()
-                    for r, _ids in records
-                    if r["Load ID"] and str(r["Load ID"]).strip() and str(r["Load ID"]) != "nan"
-                }
+                typed = {_clean(r["load ID"]) for r, _ids in records} - {None}
                 fill = typed.pop() if len(typed) == 1 else None  # one number -> whole load
+                stops_only = records[1:]  # row 0 is the warehouse
                 # new stop order: by the typed number, ties keep the old order; then 1..n
                 order = sorted(
-                    range(len(records)),
-                    key=lambda i: (float(records[i][0]["Stop"] or 0), i),
+                    range(len(stops_only)),
+                    key=lambda i: (float(stops_only[i][0]["Stop"] or 0), i),
                 )
                 new_seq = {i: pos + 1 for pos, i in enumerate(order)}
-                for i, (r, row_ids) in enumerate(records):
-                    appt = str(r["APPT #"]).strip() if r["APPT #"] else ""
+                for i, (r, row_ids) in enumerate(stops_only):
                     values: dict[str, object] = {
-                        "status": str(r["Status"]),
-                        "note": str(r["Note"] or ""),
-                        "appt_num": appt or None,
+                        "status": str(r["Status"] or STATUSES[0]),
+                        "note": _clean(r["Note"]) or "",
+                        "appt_num": _clean(r["APPT #"]),
                         "appt_time": _from_time(r["APPT time"]),
-                        "load_id": _clean(r["Load ID"]) or fill,
+                        "load_id": _clean(r["load ID"]) or fill,
                     }
                     if by_stop:
                         values["stop_seq"] = new_seq[i]
@@ -307,6 +315,15 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
             n = repo.update_appointments(changes)
             st.toast(f"{truck}: {n} change(s) saved.")
             st.rerun()
+    dl = st.columns(max(len(load_seqs), 1) + 2)
+    for col, load_seq in zip(dl, load_seqs, strict=False):
+        col.download_button(
+            f"Download {truck} · Load {load_seq}",
+            export_stops_by_load(day_rows, only=(run_id, truck, load_seq)),
+            file_name=f"appointments_{day.isoformat()}_{truck.split()[0]}_L{load_seq}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl-{run_id}-{truck}-{load_seq}",
+        )
     with st.expander(f"Remove {truck} from Appointments"):
         st.caption(
             "Only for a truck picked by mistake: removes its rows and statuses from the "

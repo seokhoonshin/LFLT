@@ -137,6 +137,29 @@ else:
 if not is_road_source(plan.matrix_source):
     st.caption("Straight lines: OSRM was not available for this run, so no road geometry is drawn.")
 
+# ---- one map per load (the picked trucks' loads by default) ------------------------------
+all_loads = [(t.number, ld.seq) for t in plan.trucks for ld in t.loads if ld.stops]
+picked_now = repo.selected_trucks(plan.run_id)
+default_loads = [x for x in all_loads if x[0] in picked_now] or all_loads[:2]
+chosen = st.multiselect(
+    "Maps by load",
+    all_loads,
+    default=default_loads,
+    format_func=lambda x: f"{x[0]} · Load {x[1]}",
+    help="One map per load, two per row. By default the loads of the trucks picked with "
+    "Select this truck (else the first two).",
+)
+for i in range(0, len(chosen), 2):
+    cols = st.columns(2)
+    for col, (number, seq) in zip(cols, chosen[i : i + 2], strict=False):
+        with col:
+            st.markdown(f"**{number} · Load {seq}**")
+            components.html(
+                map_html(plan, stops, settings, geometry_fn=geometry_fn, only={(number, seq)}),
+                height=420,
+                scrolling=False,
+            )
+
 # ---- trucks ------------------------------------------------------------------------------
 st.subheader("Trucks and loads")
 st.caption(

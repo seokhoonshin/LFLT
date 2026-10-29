@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 from typing import Any
 
-from routeopt.domain import Plan, Stop, clock
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 
 STATUSES = ["Not requested", "Requested", "Pending", "Confirmed", "Declined"]
 # a stop's outcome: confirmed when every shipment is, declined (the customer can't take
@@ -177,91 +177,118 @@ def origin_label(dc: str) -> str:
     return f"{dc} ({code})" if code else dc
 
 
-# the per-load stop export: Load ID first, APPT # just before Status
+def warehouse_label(dc: str) -> str:
+    code = WAREHOUSE_CODES.get(dc)
+    return f"{dc} WAREHOUSE ({code})" if code else f"{dc} WAREHOUSE"
+
+
+def warehouse_address(dc: str) -> str:
+    site = SITE_BY_CODE.get(dc)
+    return site.address if site else ""
+
+
+def time_text(hhmm: str | None) -> str:
+    """'13:05' -> '1:05 PM' (blank stays blank)."""
+    if not hhmm:
+        return ""
+    h, m = (int(x) for x in hhmm.split(":")[:2])
+    return f"{(h % 12) or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+# the export: stop 1 is the warehouse (the load's total volume), then the customer stops
 EXPORT_COLUMNS = [
-    ("load_id", "LOAD ID"),
-    ("truck", "Truck"),
-    ("load_seq", "Load"),
-    ("stop_seq", "Stop"),
-    ("origin", "Origin"),
-    ("customer", "Customer"),
-    ("address", "Address"),
-    ("delivery_date", "Suggested date"),
-    ("eta", "ETA"),
-    ("volume_cuft", "Volume"),
-    ("miles_from_prev", "Miles from prev"),
-    ("poc", "POC"),
-    ("shipments", "Shipments"),
-    ("shipment_ids", "Shipment IDs"),
-    ("appt_num", "APPT #"),
-    ("appt_time", "APPT time"),
-    ("status", "Status"),
-    ("note", "Note"),
+    "load ID",
+    "Stop",
+    "date",
+    "APPT time",
+    "APPT #",
+    "Customer",
+    "Address",
+    "Volume",
+    "Miles from prev",
+    "POC",
+    "Note",
 ]
 
 
-def export_stops_by_load(rows: list[dict[str, Any]], exclude_declined: bool = True) -> bytes:
-    """Excel: one row per stop (its shipment IDs in one cell, one per line), grouped by
-    load with a bold total row after each load.  Declined stops are left out by default
-    and the remaining stops of a load are numbered 1..n in their planned order."""
+def load_sheet_rows(stops: list[dict[str, Any]], exclude_declined: bool = True) -> list[dict]:
+    """One load's export rows from its ``group_by_stop`` rows: the warehouse as stop 1,
+    then the customer stops renumbered 2..n (declined stops left out by default)."""
+    kept = [s for s in stops if not (exclude_declined and s["status"] == "Declined")]
+    if not stops:
+        return []
+    first = stops[0]
+    load_id = next((s["load_id"] for s in stops if s.get("load_id")), None) or ""
+    total = round(sum(s["volume_cuft"] for s in kept), 1)
+    out = [
+        {
+            "load ID": load_id,
+            "Stop": 1,
+            "date": first["delivery_date"],
+            "APPT time": "",
+            "APPT #": "",
+            "Customer": warehouse_label(first["dc"]),
+            "Address": warehouse_address(first["dc"]),
+            "Volume": f"Load total volume : {total:,.1f}",
+            "Miles from prev": None,
+            "POC": "",
+            "Note": "",
+        }
+    ]
+    for n, s in enumerate(kept, start=2):
+        out.append(
+            {
+                "load ID": s.get("load_id") or load_id,
+                "Stop": n,
+                "date": s["delivery_date"],
+                "APPT time": time_text(s.get("appt_time")),
+                "APPT #": s.get("appt_num") or "",
+                "Customer": s["customer"],
+                "Address": s["address"],
+                "Volume": round(s["volume_cuft"], 1),
+                "Miles from prev": s["miles_from_prev"],
+                "POC": s["poc"] or "",
+                "Note": s["note"] or "",
+            }
+        )
+    return out
+
+
+def export_stops_by_load(
+    rows: list[dict[str, Any]],
+    exclude_declined: bool = True,
+    only: tuple[str, str, int] | None = None,
+) -> bytes:
+    """Excel of every load in ``rows`` (or only (run_id, truck, load_seq)): per load the
+    warehouse as stop 1, then its stops; a blank row between loads."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Stops by load"
-    ws.append([label for _k, label in EXPORT_COLUMNS])
+    ws.title = "Loads"
+    ws.append(EXPORT_COLUMNS)
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="1F3864")
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    stops = group_by_stop(rows)
-    if exclude_declined:
-        stops = [s for s in stops if s["status"] != "Declined"]
-    col = {k: i for i, (k, _l) in enumerate(EXPORT_COLUMNS, start=1)}
-    key = None
-    load_rows: list[dict[str, Any]] = []
-
-    def total() -> None:
-        if not load_rows:
-            return
-        first = load_rows[0]
-        values = [""] * len(EXPORT_COLUMNS)
-        values[col["load_id"] - 1] = first.get("load_id") or ""
-        values[col["truck"] - 1] = first["truck"]
-        values[col["load_seq"] - 1] = first["load_seq"]
-        values[col["stop_seq"] - 1] = f"{len(load_rows)} stops"
-        values[col["origin"] - 1] = origin_label(first["dc"])
-        values[col["customer"] - 1] = "Load total"
-        values[col["volume_cuft"] - 1] = round(sum(r["volume_cuft"] for r in load_rows), 1)
-        values[col["shipments"] - 1] = sum(r["shipments"] for r in load_rows)
-        values[col["status"] - 1] = (
-            f"{sum(r['status'] == 'Confirmed' for r in load_rows)}/{len(load_rows)} confirmed"
-        )
-        ws.append(values)
-        for c in ws[ws.max_row]:
-            c.font = Font(bold=True)
-            c.fill = PatternFill("solid", fgColor="E7ECF5")
-
-    for st in stops:
-        k = (st["run_id"], st["truck"], st["load_seq"])
-        if k != key:
-            total()
-            key, load_rows = k, []
-        load_rows.append(st)
-        st = {**st, "origin": origin_label(st["dc"]), "stop_seq": len(load_rows)}
-        st["shipment_ids"] = st["shipment_ids"].replace(", ", "\n")
-        ws.append([st.get(k2) for k2, _l in EXPORT_COLUMNS])
-        ws.cell(ws.max_row, col["shipment_ids"]).alignment = Alignment(wrap_text=True)
-        ws.cell(ws.max_row, col["delivery_date"]).number_format = "m/d/yyyy"
-    total()
-    widths = [12, 16, 6, 8, 12, 30, 40, 13, 10, 9, 9, 26, 10, 14, 14, 10, 14, 24]
-    for i, w in enumerate(widths, start=1):
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    loads: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    for st in group_by_stop(rows):
+        loads.setdefault((st["run_id"], st["truck"], st["load_seq"]), []).append(st)
+    keys = [k for k in loads if only is None or k == only]
+    for n, key in enumerate(keys):
+        if n:
+            ws.append([])
+        for i, r in enumerate(load_sheet_rows(loads[key], exclude_declined)):
+            ws.append([r[c] for c in EXPORT_COLUMNS])
+            ws.cell(ws.max_row, EXPORT_COLUMNS.index("date") + 1).number_format = "m/d/yyyy"
+            if i == 0:  # the warehouse row
+                for c in ws[ws.max_row]:
+                    c.font = Font(bold=True)
+                    c.fill = PatternFill("solid", fgColor="E7ECF5")
+    for i, w in enumerate([12, 6, 11, 11, 14, 32, 42, 24, 9, 26, 28], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
-    for row in ws.iter_rows(min_row=2):
-        for c in row:
-            c.alignment = Alignment(vertical="top", wrap_text=c.column == col["shipment_ids"])
     ws.freeze_panes = "A2"
     buf = io.BytesIO()
     wb.save(buf)

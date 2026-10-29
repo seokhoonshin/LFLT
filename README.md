@@ -141,16 +141,15 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    tick *Export anyway* and give a reason (logged and printed on the export).
 5. **History** — every run and version: open, re-export, compare two runs' KPIs, download
    the original upload, soft-delete/restore.
-6. **Appointments** — the trucks picked with **Select this truck** on Results, one row per
-   stop (shipments to one stop merged; *By shipment* shows them one by one): Load ID,
-   stop, origin, APPT #, APPT time, status, note, customer, shipment IDs, address,
-   suggested date, ETA, stop volume, miles, POC.  Load ID, stop order, APPT #, APPT time,
-   status (Not requested / Requested / Pending / Confirmed / Declined) and note are
-   editable; press **Save**.  *Download stops by load* gives one row per stop (its
-   shipment IDs in one cell) with a total row per load; declined stops are left out.
-   The rows are kept as history: *Results so far* shows, over any range of delivery days,
-   how many picked stops were confirmed, declined (the customer couldn't take it that
-   day) or are still open, as counts, % of stops and % of cu ft, with a chart per day.
+6. **Appointments** — the trucks picked with **Select this truck** on Results.  Per load,
+   stop 1 is the warehouse (its address and the load's total volume), then one row per
+   stop (shipments to one stop merged; *By shipment* lists them one by one): load ID ·
+   Stop · date · APPT time · APPT # · Customer · Address · Volume · Miles from prev · POC ·
+   Note · Shipments · Shipment IDs · Status.  load ID, stop order, APPT time, APPT #, note
+   and status (Not requested / Requested / Pending / Confirmed / Declined) are editable;
+   press **Save**.  Download one load or every load of the day as Excel (load ID … Note;
+   declined stops left out).  *Results so far* shows the confirmed / declined share over
+   any range of days, with a chart per day.  Results also draws one map per load.
 
 ### Command line
 

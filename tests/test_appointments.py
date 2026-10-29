@@ -172,24 +172,39 @@ def test_export_stops_by_load_leaves_out_declined() -> None:
 
     ws = load_workbook(io.BytesIO(export_stops_by_load(_rows_for_export()))).active
     header = [c.value for c in ws[1]]
-    assert header == [label for _k, label in EXPORT_COLUMNS]
-    assert header[0] == "LOAD ID" and header.index("APPT #") + 2 == header.index("Status")
-    for gone in ("Window", "Bill to", "Stop transit min"):
-        assert gone not in header
-    assert "Origin" in header
+    assert header == EXPORT_COLUMNS
+    assert header == [
+        "load ID",
+        "Stop",
+        "date",
+        "APPT time",
+        "APPT #",
+        "Customer",
+        "Address",
+        "Volume",
+        "Miles from prev",
+        "POC",
+        "Note",
+    ]
     body = [[c.value for c in row] for row in ws.iter_rows(min_row=2)]
     col = {h: i for i, h in enumerate(header)}
-    stops = [r for r in body if r[col["Customer"]] != "Load total"]
+    wh = body[0]  # stop 1 is the warehouse with the load's total volume
+    assert wh[col["Stop"]] == 1 and wh[col["Customer"]] == "LGC2 WAREHOUSE (N1F)"
+    assert wh[col["Address"]] == "5550 Mango Ave, Rialto, CA 92377"
+    assert wh[col["Volume"]] == "Load total volume : 18.0"  # declined B not counted
+    assert wh[col["APPT #"]] is None and wh[col["load ID"]] == "19007709"
+    stops = body[1:]
     assert [r[col["Customer"]] for r in stops] == ["A", "C"]  # B declined: left out
-    assert [r[col["Stop"]] for r in stops] == [1, 2]  # renumbered
-    assert stops[0][col["Shipment IDs"]] == "a1\na2" and stops[0][col["APPT time"]] == "08:00"
-    assert stops[0][col["Volume"]] == 15.0  # the stop's total
-    assert stops[0][col["Origin"]] == "LGC2 (N1F)" and stops[0][col["LOAD ID"]] == "19007709"
-    total = body[-1]
-    assert total[col["Customer"]] == "Load total" and total[col["Volume"]] == 18.0
+    assert [r[col["Stop"]] for r in stops] == [2, 3]
+    assert stops[0][col["Volume"]] == 15.0 and stops[0][col["APPT time"]] == "8:00 AM"
+    assert stops[1][col["APPT #"]] == "APT-9"
     keep = export_stops_by_load(_rows_for_export(), exclude_declined=False)
     ws2 = load_workbook(io.BytesIO(keep)).active
     assert sum(r[col["Customer"]].value == "B" for r in ws2.iter_rows(min_row=2)) == 1
+    one = export_stops_by_load(_rows_for_export(), only=("r", "T01", 1))
+    assert load_workbook(io.BytesIO(one)).active.max_row == 4
+    none = export_stops_by_load(_rows_for_export(), only=("r", "T09", 1))
+    assert load_workbook(io.BytesIO(none)).active.max_row == 1
 
 
 def test_old_database_gets_new_appointment_columns(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -220,3 +235,16 @@ def test_stop_order_and_appointment_time_are_saved(tmp_path) -> None:  # type: i
     again = [r for r in repo.list_appointments() if r["id"] in {x["id"] for x in first}]
     assert all(r["stop_seq"] == 9 and r["appt_time"] == "10:30" for r in again)
     assert all(r["load_id"] == "123" for r in again)
+
+
+def test_map_of_one_load_draws_only_that_load(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from routeopt.export.mapping import map_html
+
+    plan, stops, s = _plan(tmp_path)
+    loads = [(t.number, ld.seq) for t in plan.trucks for ld in t.loads if ld.stops]
+    number, seq = loads[0]
+    one = map_html(plan, stops, s, only={(number, seq)})
+    assert f"{number}·L{seq}·#1" in one
+    others = [x for x in loads if x[0] != number]
+    if others:
+        assert f"{others[0][0]}·L{others[0][1]}·#1" not in one

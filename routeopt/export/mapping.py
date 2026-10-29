@@ -74,8 +74,14 @@ def build_map(
     stops: list[Stop],
     settings: RunSettings,
     geometry_fn: GeometryFn | None = None,
+    only: set[tuple[str, int]] | None = None,
 ) -> folium.Map:
-    """Return a folium map of the plan; ``geometry_fn`` supplies road polylines (OSRM)."""
+    """Return a folium map of the plan; ``geometry_fn`` supplies road polylines (OSRM).
+    ``only`` = {(truck number, load seq)} draws just those loads (no unassigned layer)."""
+
+    def shown(truck: str, seq: int) -> bool:
+        return only is None or (truck, seq) in only
+
     by_id = {s.stop_id: s for s in stops}
     colors = truck_colors(plan)
     m = folium.Map(
@@ -83,9 +89,12 @@ def build_map(
     )
     Fullscreen().add_to(m)
     points: list[Coord] = [(HUB_LAT, HUB_LON)]
-    used_sites = {load.site for t in plan.trucks for load in t.loads if load.stops} or {
-        DEFAULT_SITE
-    }
+    used_sites = {
+        load.site
+        for t in plan.trucks
+        for load in t.loads
+        if load.stops and shown(t.number, load.seq)
+    } or {DEFAULT_SITE}
     for site in SITES:
         if site.code not in used_sites:
             continue
@@ -98,7 +107,7 @@ def build_map(
         points.append((site.lat, site.lon))
 
     for truck in plan.trucks:
-        loads = [load for load in truck.loads if load.stops]
+        loads = [load for load in truck.loads if load.stops and shown(truck.number, load.seq)]
         if not loads:
             continue
         color = colors[truck.number]
@@ -139,7 +148,7 @@ def build_map(
             ).add_to(group)
         group.add_to(m)
 
-    if plan.unassigned:
+    if plan.unassigned and only is None:
         group = folium.FeatureGroup(name="Unassigned", show=True)
         for u in plan.unassigned:
             stop = by_id.get(u.stop_id)
@@ -159,7 +168,7 @@ def build_map(
             ).add_to(group)
             points.append((stop.latitude, stop.longitude))
         group.add_to(m)
-    if plan.out_of_scope:
+    if plan.out_of_scope and only is None:
         group = folium.FeatureGroup(name="Not in scope", show=False)
         for u in plan.out_of_scope:
             stop = by_id.get(u.stop_id)
@@ -180,11 +189,15 @@ def build_map(
         f'<div><span style="display:inline-block;width:12px;height:12px;background:{colors[t.number]};'
         f'margin-right:6px;border-radius:2px"></span>{t.number} {t.driver_name}</div>'
         for t in plan.trucks
-        if t.used
+        if t.used and any(shown(t.number, ld.seq) for ld in t.loads if ld.stops)
     )
     legend_rows += (
-        '<div><span style="display:inline-block;width:12px;height:12px;background:#9e9e9e;'
-        'margin-right:6px;border-radius:6px"></span>Unassigned</div>'
+        ""
+        if only is not None
+        else (
+            '<div><span style="display:inline-block;width:12px;height:12px;background:#9e9e9e;'
+            'margin-right:6px;border-radius:6px"></span>Unassigned</div>'
+        )
     )
     legend = (
         '<div style="position:fixed;bottom:24px;left:12px;z-index:9999;background:white;'
@@ -204,7 +217,11 @@ def build_map(
 
 
 def map_html(
-    plan: Plan, stops: list[Stop], settings: RunSettings, geometry_fn: GeometryFn | None = None
+    plan: Plan,
+    stops: list[Stop],
+    settings: RunSettings,
+    geometry_fn: GeometryFn | None = None,
+    only: set[tuple[str, int]] | None = None,
 ) -> str:
     """The map as a standalone HTML document."""
-    return str(build_map(plan, stops, settings, geometry_fn).get_root().render())
+    return str(build_map(plan, stops, settings, geometry_fn, only).get_root().render())
