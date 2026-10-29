@@ -96,3 +96,21 @@ def test_results_edit_history_pages(db_env: Repository) -> None:
     assert any(run_id in t.value for t in at2.title)
     at3 = _run("pages/5_History.py", run_id)
     assert at3.title[0].value == "History"
+
+
+def test_select_truck_then_appointments_page(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    at = _run("pages/6_Appointments.py")
+    assert any("No trucks picked" in str(i.value) for i in at.info)
+    res = _run("pages/3_Results.py", run_id)
+    pick = next(b for b in res.button if b.label == "Select this truck")
+    pick.click().run()
+    assert not res.exception, res.exception
+    assert any(b.label == "✓ Selected" for b in res.button)
+    rows = db_env.list_appointments()
+    assert rows and {r["run_id"] for r in rows} == {run_id}
+    ap = _run("pages/6_Appointments.py")
+    assert ap.title[0].value == "Appointments"
+    save = next(b for b in ap.button if b.label.startswith("Save "))
+    save.click().run()
+    assert not ap.exception, ap.exception

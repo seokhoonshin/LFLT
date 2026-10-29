@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from routeopt.config import RunSettings
 from routeopt.db.models import (
+    AppointmentRow,
     AppStateRow,
     Base,
     EditLogRow,
@@ -642,6 +643,73 @@ class Repository:
             else:
                 row.value_json = payload
                 row.updated_at = hub_now()
+
+    # ---- appointments -----------------------------------------------------------------
+    def select_truck_for_appointments(self, rows: list[dict[str, Any]]) -> int:
+        """Add one truck's shipments (from ``appointment_rows``) to the Appointments list.
+        A shipment already listed for the same run keeps its status.  Returns rows added."""
+        if not rows:
+            return 0
+        run_id = rows[0]["run_id"]
+        with self._sf() as session, session.begin():
+            existing = set(
+                session.execute(
+                    select(AppointmentRow.shipment_id).where(AppointmentRow.run_id == run_id)
+                ).scalars()
+            )
+            added = 0
+            for r in rows:
+                if r["shipment_id"] in existing:
+                    continue
+                session.add(AppointmentRow(**r))
+                added += 1
+            return added
+
+    def unselect_truck(self, run_id: str, truck: str) -> None:
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.run_id == run_id, AppointmentRow.truck == truck
+                )
+            )
+
+    def selected_trucks(self, run_id: str) -> set[str]:
+        with self._sf() as session:
+            return set(
+                session.execute(
+                    select(AppointmentRow.truck).where(AppointmentRow.run_id == run_id)
+                ).scalars()
+            )
+
+    def list_appointments(self) -> list[dict[str, Any]]:
+        cols = [c.name for c in AppointmentRow.__table__.columns]
+        with self._sf() as session:
+            rows = session.execute(
+                select(AppointmentRow).order_by(
+                    AppointmentRow.delivery_date.desc(),
+                    AppointmentRow.run_id,
+                    AppointmentRow.truck,
+                    AppointmentRow.load_seq,
+                    AppointmentRow.stop_seq,
+                    AppointmentRow.id,
+                )
+            ).scalars()
+            return [{c: getattr(r, c) for c in cols} for r in rows]
+
+    def update_appointments(self, changes: dict[int, dict[str, str]]) -> int:
+        """Set status / note by row id; returns the number of rows changed."""
+        n = 0
+        with self._sf() as session, session.begin():
+            for row_id, values in changes.items():
+                r = session.get(AppointmentRow, row_id)
+                if r is None:
+                    continue
+                for key in ("status", "note"):
+                    if key in values and getattr(r, key) != values[key]:
+                        setattr(r, key, values[key])
+                        n += 1
+                r.updated_at = hub_now()
+        return n
 
     # ---- caches -----------------------------------------------------------------------
     def travel_cache_store(self) -> DbTravelCacheStore:

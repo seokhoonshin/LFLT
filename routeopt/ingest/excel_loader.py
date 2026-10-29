@@ -41,6 +41,7 @@ CANONICAL_COLUMNS: list[str] = [
     "priority",
     "memo",
     "declared_value",
+    "bill_to_code",
 ]
 
 REQUIRED_COLUMNS: list[str] = [
@@ -120,6 +121,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "priority": ["prio", "priority group"],
     "memo": ["memo text", "memo txt", "internal memo"],
     "declared_value": ["declared val", "declared value", "dcld val", "dcld_val_dlr"],
+    "bill_to_code": ["bill to", "bill to code", "billto", "bill to cd", "bill_to_cd", "bill_to"],
 }
 
 

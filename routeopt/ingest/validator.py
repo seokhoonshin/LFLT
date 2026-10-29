@@ -525,6 +525,9 @@ def validate_rows(
                 "pallet_required": pallet,
                 "priority": priority,
                 "declared_value": float(parse_float(raw.get("declared_value")) or 0.0),
+                "bill_to_code": str(raw.get("bill_to_code")).strip()
+                if raw.get("bill_to_code") not in (None, "")
+                else None,
             }
         )
 

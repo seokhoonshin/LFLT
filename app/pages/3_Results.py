@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from routeopt.appointments import appointment_rows
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 from routeopt.edit.revalidate import can_export
 from routeopt.export.excel import export_excel
@@ -138,6 +139,11 @@ if not is_road_source(plan.matrix_source):
 
 # ---- trucks ------------------------------------------------------------------------------
 st.subheader("Trucks and loads")
+st.caption(
+    "Pick the trucks you will actually run with **Select this truck**: their stops go to the "
+    "**Appointments** page (sidebar), where you track each appointment request."
+)
+picked = repo.selected_trucks(plan.run_id)
 for truck in plan.trucks:
     loads = [load for load in truck.loads if load.stops]
     if not loads:
@@ -148,7 +154,22 @@ for truck in plan.trucks:
         f"(start {clock(truck.start_s if truck.start_s is not None else loads[0].depart_s)}"
         f" → back {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
     )
-    with st.expander(title):
+    head, pick = st.columns([8, 1.4])
+    if truck.number in picked:
+        pick.button(
+            "✓ Selected",
+            key=f"picked-{truck.number}",
+            disabled=True,
+            use_container_width=True,
+            help="Listed on the Appointments page (remove it there).",
+        )
+    elif pick.button(
+        "Select this truck", key=f"pick-{truck.number}", type="primary", use_container_width=True
+    ):
+        added = repo.select_truck_for_appointments(appointment_rows(plan, stops, truck.number))
+        st.toast(f"{truck.number}: {added} shipment(s) added to Appointments.")
+        st.rerun()
+    with head.expander(title):
         for load in loads:
             cap = settings.load_cap_cuft(load.pallet)
             st.markdown(

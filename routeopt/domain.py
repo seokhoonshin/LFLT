@@ -163,6 +163,7 @@ class Shipment(BaseModel):
     pallet_required: bool = False
     priority: int | None = None  # CA: 1 existing LFLT, 2 add-on, 3 low
     declared_value: float = 0.0  # for the load summary export (sum per load)
+    bill_to_code: str | None = None  # shown on the Appointments page
 
     @field_validator("site")
     @classmethod

@@ -216,3 +216,34 @@ class AppStateRow(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class AppointmentRow(Base):
+    """One shipment of a truck picked on Results for appointment requests (a snapshot of
+    the plan at the time it was picked, plus the status the planner sets)."""
+
+    __tablename__ = "appointments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    truck: Mapped[str] = mapped_column(String(64))
+    load_seq: Mapped[int] = mapped_column(Integer)
+    stop_seq: Mapped[int] = mapped_column(Integer)
+    stop_id: Mapped[str] = mapped_column(String(32))
+    shipment_id: Mapped[str] = mapped_column(String(128))
+    customer: Mapped[str] = mapped_column(Text, default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    bill_to_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    delivery_date: Mapped[dt.date] = mapped_column(Date)
+    eta: Mapped[str] = mapped_column(String(16), default="")
+    window: Mapped[str] = mapped_column(String(40), default="")
+    volume_cuft: Mapped[float] = mapped_column(Float, default=0.0)
+    miles_from_prev: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_transit_min: Mapped[float] = mapped_column(Float, default=0.0)
+    poc: Mapped[str] = mapped_column(Text, default="")
+    dc: Mapped[str] = mapped_column(String(16), default="")
+    status: Mapped[str] = mapped_column(String(16), default="Not requested")
+    note: Mapped[str] = mapped_column(Text, default="")
+    selected_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
