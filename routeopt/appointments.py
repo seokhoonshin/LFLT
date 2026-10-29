@@ -104,3 +104,50 @@ def outcome_summary(stops: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
             "volume_pct": round(100 * v / vol, 1),
         }
     return out
+
+
+def stop_status(statuses: list[str]) -> str:
+    """One status for a stop: the shared one, else the least advanced (so a stop shows
+    Confirmed only when every shipment is; any Declined wins)."""
+    if "Declined" in statuses:
+        return "Declined"
+    if len(set(statuses)) == 1:
+        return statuses[0]
+    return min(statuses, key=STATUSES.index)
+
+
+def group_by_stop(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shipment rows -> one row per stop (same truck, load and stop), keeping the row ids
+    so a status set on the stop can be written to each of its shipments."""
+    stops: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for r in rows:
+        key = (r["run_id"], r["version"], r["truck"], r["load_seq"], r["stop_seq"])
+        st = stops.get(key)
+        if st is None:
+            st = stops[key] = {
+                **{k: r[k] for k in r if k not in ("id", "shipment_id", "volume_cuft")},
+                "ids": [],
+                "shipment_ids": [],
+                "volume_cuft": 0.0,
+                "statuses": [],
+                "notes": [],
+                "bill_tos": [],
+            }
+        st["ids"].append(r["id"])
+        st["shipment_ids"].append(r["shipment_id"])
+        st["volume_cuft"] += r["volume_cuft"] or 0.0
+        st["statuses"].append(r["status"])
+        if r.get("note") and r["note"] not in st["notes"]:
+            st["notes"].append(r["note"])
+        if r.get("bill_to_code") and r["bill_to_code"] not in st["bill_tos"]:
+            st["bill_tos"].append(r["bill_to_code"])
+    out = []
+    for st in stops.values():
+        st["shipments"] = len(st["ids"])
+        st["volume_cuft"] = round(st["volume_cuft"], 1)
+        st["status"] = stop_status(st.pop("statuses"))
+        st["note"] = " | ".join(st.pop("notes"))
+        st["bill_to_code"] = ", ".join(st.pop("bill_tos")) or None
+        st["shipment_ids"] = ", ".join(st["shipment_ids"])
+        out.append(st)
+    return out

@@ -89,3 +89,42 @@ def test_stop_outcomes_and_summary() -> None:
     }
     assert summary["Declined"]["stops"] == 1 and summary["Declined"]["stops_pct"] == 25.0
     assert summary["Open"]["volume"] == 60.0
+
+
+def test_group_by_stop_merges_shipments_of_one_stop() -> None:
+    import datetime as dt
+
+    from routeopt.appointments import group_by_stop
+
+    base = {
+        "run_id": "r",
+        "version": 0,
+        "truck": "T01",
+        "load_seq": 1,
+        "delivery_date": dt.date(2026, 11, 2),
+        "customer": "C",
+        "address": "1 A St",
+        "eta": "8:00 AM",
+        "window": "",
+        "miles_from_prev": 5.0,
+        "stop_transit_min": 0.0,
+        "poc": "",
+        "dc": "LGC2",
+        "note": "",
+    }
+    rows = [
+        {**base, "id": 1, "stop_seq": 1, "shipment_id": "A", "volume_cuft": 10.0,
+         "bill_to_code": "B1", "status": "Confirmed"},
+        {**base, "id": 2, "stop_seq": 1, "shipment_id": "B", "volume_cuft": 5.5,
+         "bill_to_code": "B1", "status": "Requested"},
+        {**base, "id": 3, "stop_seq": 2, "shipment_id": "C", "volume_cuft": 7.0,
+         "bill_to_code": None, "status": "Declined"},
+    ]  # fmt: skip
+    stops = group_by_stop(rows)
+    assert len(stops) == 2
+    first, second = stops
+    assert first["ids"] == [1, 2] and first["shipments"] == 2
+    assert first["shipment_ids"] == "A, B" and first["volume_cuft"] == 15.5
+    assert first["bill_to_code"] == "B1"
+    assert first["status"] == "Requested"  # not every shipment is confirmed yet
+    assert second["status"] == "Declined" and second["bill_to_code"] is None

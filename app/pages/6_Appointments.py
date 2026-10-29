@@ -16,7 +16,13 @@ from itertools import groupby
 import altair as alt
 import pandas as pd
 import streamlit as st
-from routeopt.appointments import OUTCOMES, STATUSES, outcome_summary, stop_outcomes
+from routeopt.appointments import (
+    OUTCOMES,
+    STATUSES,
+    group_by_stop,
+    outcome_summary,
+    stop_outcomes,
+)
 
 from _common import get_repo, osrm_status_line, setup_page
 
@@ -28,7 +34,7 @@ OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
 
 st.title("Appointments")
 st.caption(
-    "Trucks picked with **Select this truck** on Results. Set each shipment's status as you "
+    "Trucks picked with **Select this truck** on Results. Set each stop's status as you "
     "request and confirm appointments (**Declined** = the customer can't take it that day), "
     "then press **Save**. Everything is kept as history."
 )
@@ -112,24 +118,34 @@ dates = sorted({r["delivery_date"] for r in rows}, reverse=True)
 day = st.selectbox("Delivery day", dates, format_func=lambda d: d.strftime("%a %Y-%m-%d"))
 day_rows = [r for r in rows if r["delivery_date"] == day]
 
-counts = {s: sum(r["status"] == s for r in day_rows) for s in STATUSES}
+view = st.radio(
+    "View",
+    ["By stop", "By shipment"],
+    horizontal=True,
+    help="By stop: shipments to the same stop are one row; a status set on it applies to "
+    "every shipment of that stop.",
+)
+by_stop = view == "By stop"
+
+counted = group_by_stop(day_rows) if by_stop else day_rows
 m = st.columns(len(STATUSES) + 1)
-m[0].metric("Shipments", len(day_rows))
+m[0].metric("Stops" if by_stop else "Shipments", len(counted))
 for col, status in zip(m[1:], STATUSES, strict=True):
-    col.metric(status, counts[status])
+    col.metric(status, sum(r["status"] == status for r in counted))
 
 buf = io.BytesIO()
-pd.DataFrame(day_rows).drop(columns=["id"]).to_excel(buf, index=False, sheet_name="Appointments")
+export_rows = group_by_stop(day_rows) if by_stop else day_rows
+pd.DataFrame(export_rows).drop(columns=["id", "ids"], errors="ignore").to_excel(
+    buf, index=False, sheet_name="Appointments"
+)
 st.download_button(
     "Download this day (Excel)",
     buf.getvalue(),
-    file_name=f"appointments_{day.isoformat()}.xlsx",
+    file_name=f"appointments_{day.isoformat()}{'_stops' if by_stop else ''}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-COLUMNS = {
-    "stop_seq": "Stop",
-    "shipment_id": "Shipment ID",
+TAIL = {
     "customer": "Customer",
     "address": "Address",
     "bill_to_code": "Bill to",
@@ -140,9 +156,14 @@ COLUMNS = {
     "miles_from_prev": "Miles from prev",
     "stop_transit_min": "Stop transit min",
     "poc": "POC",
-    "status": "Status",
-    "note": "Note",
 }
+# Status and Note right after the stop number so they are on screen without scrolling
+COLUMNS = {"stop_seq": "Stop", "status": "Status", "note": "Note"}
+if by_stop:
+    COLUMNS |= {"customer": "Customer", "shipments": "Shipments", "shipment_ids": "Shipment IDs"}
+else:
+    COLUMNS |= {"customer": "Customer", "shipment_id": "Shipment ID"}
+COLUMNS |= TAIL
 
 
 def truck_key(r: dict) -> tuple[str, int, str]:
@@ -151,20 +172,26 @@ def truck_key(r: dict) -> tuple[str, int, str]:
 
 for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
     items = list(group)
-    done = sum(r["status"] == "Confirmed" for r in items)
-    declined = sum(r["status"] == "Declined" for r in items)
+    stops_here = group_by_stop(items)
+    done = sum(s["status"] == "Confirmed" for s in stops_here)
+    declined = sum(s["status"] == "Declined" for s in stops_here)
     st.markdown(
-        f"#### {truck} · {done}/{len(items)} confirmed"
+        f"#### {truck} · {done}/{len(stops_here)} stops confirmed"
         + (f" · {declined} declined" if declined else "")
     )
-    st.caption(f"Run {run_id} · v{version} · from {items[0]['dc']}")
+    st.caption(
+        f"Run {run_id} · v{version} · from {items[0]['dc']} · "
+        f"{len(stops_here)} stops, {len(items)} shipments"
+    )
+    shown = stops_here if by_stop else items
     with st.form(f"form-{run_id}-{truck}"):
-        edited: dict[int, pd.DataFrame] = {}
-        for load_seq, load_items in groupby(items, key=lambda r: r["load_seq"]):
+        edited: list[tuple[pd.DataFrame, list[list[int]]]] = []
+        for load_seq, load_items in groupby(shown, key=lambda r: r["load_seq"]):
             load_items = list(load_items)
             st.markdown(f"**Load {load_seq}** — {load_items[0]['dc']}")
-            df = pd.DataFrame(load_items).set_index("id")[list(COLUMNS)].rename(columns=COLUMNS)
-            edited[load_seq] = st.data_editor(
+            df = pd.DataFrame(load_items)[list(COLUMNS)].rename(columns=COLUMNS)
+            ids = [r["ids"] if by_stop else [r["id"]] for r in load_items]
+            out = st.data_editor(
                 df,
                 hide_index=True,
                 use_container_width=True,
@@ -180,16 +207,17 @@ for (run_id, version, truck), group in groupby(day_rows, key=truck_key):
                     "Suggested date": st.column_config.DateColumn(
                         "Suggested date", format="MM/DD/YYYY"
                     ),
+                    "Shipment IDs": st.column_config.TextColumn("Shipment IDs", width="medium"),
                 },
-                key=f"ed-{run_id}-{truck}-{load_seq}",
+                key=f"ed-{view}-{run_id}-{truck}-{load_seq}",
             )
-            # data_editor keeps the index (row id) even when hidden
-            edited[load_seq].index = df.index
+            edited.append((out.reset_index(drop=True), ids))
         if st.form_submit_button(f"Save {truck}", type="primary"):
             changes = {
                 int(row_id): {"status": str(r["Status"]), "note": str(r["Note"] or "")}
-                for frame in edited.values()
-                for row_id, r in frame.iterrows()
+                for frame, ids in edited
+                for (_i, r), row_ids in zip(frame.iterrows(), ids, strict=True)
+                for row_id in row_ids
             }
             n = repo.update_appointments(changes)
             st.toast(f"{truck}: {n} change(s) saved.")
