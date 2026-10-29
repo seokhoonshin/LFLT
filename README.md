@@ -148,8 +148,13 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    Note · Shipments · Shipment IDs · Status.  load ID, stop order, APPT time, APPT #, note
    and status (Not requested / Requested / Pending / Confirmed / Declined) are editable;
    press **Save**.  Download one load or every load of the day as Excel (load ID … Note;
-   declined stops left out).  *Results so far* shows the confirmed / declined share over
-   any range of days, with a chart per day.  Results also draws one map per load.
+   declined stops left out).  Two tabs: **Original** (the trucks as picked — the record,
+   declined stops included) and **Re-optimized**: *Re-optimize … without declined stops*
+   re-plans the picked trucks with the declined stops left out, every other stop kept on
+   its truck and the run's other candidates (from the original upload) filling the room;
+   it is saved as a new version of the run.  A status set in either tab applies to the
+   same shipment in the other.  *Results so far* shows the confirmed / declined share
+   over any range of days, with a chart per day.  Results also draws one map per load.
 
 ### Command line
 

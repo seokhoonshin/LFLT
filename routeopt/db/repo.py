@@ -658,6 +658,10 @@ class Repository:
                 row.updated_at = hub_now()
 
     # ---- appointments -----------------------------------------------------------------
+    @staticmethod
+    def _original():  # type: ignore[no-untyped-def]
+        return (AppointmentRow.stage.is_(None)) | (AppointmentRow.stage == "original")
+
     def select_truck_for_appointments(self, rows: list[dict[str, Any]]) -> int:
         """Add one truck's shipments (from ``appointment_rows``) to the Appointments list.
         A shipment already listed for the same run keeps its status.  Returns rows added."""
@@ -667,7 +671,9 @@ class Repository:
         with self._sf() as session, session.begin():
             existing = set(
                 session.execute(
-                    select(AppointmentRow.shipment_id).where(AppointmentRow.run_id == run_id)
+                    select(AppointmentRow.shipment_id).where(
+                        AppointmentRow.run_id == run_id, self._original()
+                    )
                 ).scalars()
             )
             added = 0
@@ -679,6 +685,7 @@ class Repository:
             return added
 
     def unselect_truck(self, run_id: str, truck: str) -> None:
+        """Remove a truck picked by mistake (its original rows and its re-plan rows)."""
         with self._sf() as session, session.begin():
             session.execute(
                 delete(AppointmentRow).where(
@@ -690,9 +697,41 @@ class Repository:
         with self._sf() as session:
             return set(
                 session.execute(
-                    select(AppointmentRow.truck).where(AppointmentRow.run_id == run_id)
+                    select(AppointmentRow.truck).where(
+                        AppointmentRow.run_id == run_id, self._original()
+                    )
                 ).scalars()
             )
+
+    def save_reoptimized(self, run_id: str, rows: list[dict[str, Any]]) -> dict[str, int]:
+        """Store a re-plan (``appointment_rows`` of the new version, every picked truck) as
+        the run's Re-optimized set, replacing an earlier one.  The original rows are not
+        touched.  A shipment that is also in the original (or the earlier re-plan) keeps
+        its status, note, APPT # / time and load ID; new ones start as Not requested."""
+        carry = ("status", "note", "appt_num", "appt_time", "load_id")
+        counts = {"kept": 0, "added": 0}
+        with self._sf() as session, session.begin():
+            known: dict[str, dict[str, Any]] = {}
+            for a in session.execute(
+                select(AppointmentRow)
+                .where(AppointmentRow.run_id == run_id)
+                .order_by(AppointmentRow.id)
+            ).scalars():
+                known[a.shipment_id] = {c: getattr(a, c) for c in carry}  # later wins
+            session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.run_id == run_id, AppointmentRow.stage == "reoptimized"
+                )
+            )
+            for r in rows:
+                values = {**r, "stage": "reoptimized"}
+                if r["shipment_id"] in known:
+                    values |= known[r["shipment_id"]]
+                    counts["kept"] += 1
+                else:
+                    counts["added"] += 1
+                session.add(AppointmentRow(**values))
+        return counts
 
     def list_appointments(self) -> list[dict[str, Any]]:
         cols = [c.name for c in AppointmentRow.__table__.columns]
@@ -723,6 +762,19 @@ class Repository:
                         setattr(r, key, values[key])
                         n += 1
                 r.updated_at = hub_now()
+                # one shipment, one appointment: the original and the re-plan row agree
+                shared = {k: values[k] for k in ("status", "appt_num", "appt_time") if k in values}
+                if shared:
+                    for twin in session.execute(
+                        select(AppointmentRow).where(
+                            AppointmentRow.run_id == r.run_id,
+                            AppointmentRow.shipment_id == r.shipment_id,
+                            AppointmentRow.id != r.id,
+                        )
+                    ).scalars():
+                        for k, v in shared.items():
+                            setattr(twin, k, v)
+                        twin.updated_at = hub_now()
         return n
 
     # ---- caches -----------------------------------------------------------------------

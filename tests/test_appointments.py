@@ -248,3 +248,67 @@ def test_map_of_one_load_draws_only_that_load(tmp_path) -> None:  # type: ignore
     others = [x for x in loads if x[0] != number]
     if others:
         assert f"{others[0][0]}·L{others[0][1]}·#1" not in one
+
+
+def test_replan_leaves_out_declined_and_keeps_the_rest_on_their_truck(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from routeopt.pipeline import default_trucks, optimize
+    from routeopt.reoptimize import replan
+    from routeopt.travel import node_coords
+    from routeopt.travel.haversine import HaversineProvider
+
+    from tests.test_ca_lflt import _ca, _ship, _stops
+
+    s = _ca(goal="stops")
+    ships = [_ship(10 + 2 * i, 20 * i, address=f"{i} Rialto Rd", volume=60) for i in range(6)]
+    stops = _stops(ships, s)
+    raw = HaversineProvider().matrix(node_coords(stops))
+    res = optimize(stops, raw, s, default_trucks()[:1])  # one truck: some stops left over
+    repo = Repository(f"sqlite:///{tmp_path / 'r.db'}")
+    repo.init_schema()
+    repo.save_run(
+        res.plan,
+        res.all_stops,
+        s,
+        raw,
+        [x for st_ in res.all_stops for x in st_.shipments],
+        default_trucks()[:1],
+        in_scope_ids=res.in_scope_ids,
+    )
+    truck = res.plan.trucks[0]
+    rows = appointment_rows(res.plan, res.all_stops, truck.number)
+    repo.select_truck_for_appointments(rows)
+    listed = repo.list_appointments()
+    gone = listed[0]["stop_id"]
+    repo.update_appointments(
+        {r["id"]: {"status": "Declined"} for r in listed if r["stop_id"] == gone}
+    )
+    rec = repo.load_run(res.plan.run_id)
+    out = replan(rec, repo.list_appointments())
+    served = {v.stop_id: t.number for t in out.plan.trucks for ld in t.loads for v in ld.stops}
+    assert gone not in served and out.declined == [gone]
+    assert all(served.get(sid) == truck.number for sid in out.pinned)  # kept on the truck
+    assert out.plan.plan_version == 1 and out.plan.run_id == res.plan.run_id
+    repo.save_plan_version(rec.run_id, out.plan, note="re-plan")
+    new_rows = appointment_rows(out.plan, out.stops, truck.number)
+    counts = repo.save_reoptimized(rec.run_id, new_rows)
+    assert counts["kept"] >= 1 and counts["kept"] + counts["added"] == len(new_rows)
+    after = repo.list_appointments()
+    original = [r for r in after if r["stage"] != "reoptimized"]
+    reopt = [r for r in after if r["stage"] == "reoptimized"]
+    # the original set is the record: unchanged, the declined stop still there
+    assert sorted(r["id"] for r in original) == sorted(r["id"] for r in listed)
+    assert all(r["status"] == "Declined" for r in original if r["stop_id"] == gone)
+    assert gone not in {r["stop_id"] for r in reopt} and {r["version"] for r in reopt} == {1}
+    assert repo.selected_trucks(rec.run_id) == {truck.number}
+    # one shipment, one appointment: confirming it in the re-plan confirms the original
+    kept = next(r for r in reopt if r["shipment_id"] in {o["shipment_id"] for o in original})
+    repo.update_appointments({kept["id"]: {"status": "Confirmed", "appt_num": "A1"}})
+    twin = next(
+        r
+        for r in repo.list_appointments()
+        if r["stage"] != "reoptimized" and r["shipment_id"] == kept["shipment_id"]
+    )
+    assert twin["status"] == "Confirmed" and twin["appt_num"] == "A1"
+    # re-optimizing again replaces the re-plan set, it does not pile up
+    repo.save_reoptimized(rec.run_id, new_rows)
+    assert sum(r["stage"] == "reoptimized" for r in repo.list_appointments()) == len(new_rows)

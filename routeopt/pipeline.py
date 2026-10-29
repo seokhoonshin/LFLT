@@ -127,6 +127,7 @@ def optimize(
     settings: RunSettings,
     trucks: list[TruckConfig],
     run_id: str | None = None,
+    pinned: dict[str, str] | None = None,
 ) -> OptimizeResult:
     """Solve, extract, validate and attribute reasons.  Never hangs: the solver is
     time-limited and a partial plan (or a clear failure message) always comes back."""
@@ -144,9 +145,16 @@ def optimize(
     ]
     solve_stops = [s for s in stops if s.stop_id not in obs_ids]
     solve_matrix = matrix.submatrix(keep) if obs_ids else matrix
-    inputs = SolverInputs(stops=solve_stops, matrix=solve_matrix, settings=settings, trucks=trucks)
+    inputs = SolverInputs(
+        stops=solve_stops,
+        matrix=solve_matrix,
+        settings=settings,
+        trucks=trucks,
+        pinned=dict(pinned or {}),
+    )
     t0 = time.perf_counter()
-    outcome = solve(inputs)
+    # the greedy start ignores pins, so a pinned re-plan starts from the solver's own
+    outcome = solve(inputs, use_initial=not pinned)
     plan = extract_plan(outcome, inputs, run_id=run_id, matrix_source=matrix.source)
     plan.out_of_scope = out_of_scope
     if not is_road_source(matrix.source):

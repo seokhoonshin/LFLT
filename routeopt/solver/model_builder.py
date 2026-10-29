@@ -31,6 +31,9 @@ class SolverInputs:
     matrix: Matrix  # over [hub] + stops
     settings: RunSettings
     trucks: list[TruckConfig]  # selected trucks, in order
+    # stop_id -> truck number: the stop may only go on that truck and is kept whenever it
+    # fits (used to re-plan around declined appointments without moving accepted ones)
+    pinned: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.matrix.n != len(self.stops) + N_DEPOTS:
@@ -360,8 +363,16 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
 
     # ---- tiers / disjunctions --------------------------------------------------------
     penalties: list[int] = []
+    truck_no = {s.vehicle: inputs.trucks[s.truck_index].truck_number for s in slots}
     for i, stop in enumerate(stops, start=n_dep):
         penalty = settings.stop_penalty(stop.tier, stop.delivery_volume)
+        owner = inputs.pinned.get(stop.stop_id)
+        if owner is not None:
+            # only on its truck, and dropping it costs far more than any other stop
+            other = [v for v, number in truck_no.items() if number != owner]
+            if other:
+                routing.VehicleVar(manager.NodeToIndex(i)).RemoveValues(other)
+            penalty *= 100
         penalties.append(penalty)
         routing.AddDisjunction([manager.NodeToIndex(i)], penalty)
 

@@ -116,3 +116,11 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     save = next(b for b in ap.button if b.label.startswith("Save "))
     save.click().run()
     assert not ap.exception, ap.exception
+    reopt = next(b for b in ap.button if b.label.startswith("Re-optimize "))
+    assert not reopt.disabled
+    reopt.click().run()
+    assert not ap.exception, ap.exception
+    after = db_env.list_appointments()
+    assert any(r["stage"] == "reoptimized" for r in after)
+    assert any(r["status"] == "Declined" and r["stage"] != "reoptimized" for r in after)
+    assert any("Re-optimized" in str(sv.value) for sv in ap.success)
