@@ -109,8 +109,10 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     assert any(b.label == "✓ Selected" for b in res.button)
     rows = db_env.list_appointments()
     assert rows and {r["run_id"] for r in rows} == {run_id}
+    db_env.update_appointments({rows[0]["id"]: {"status": "Declined", "note": "no dock"}})
     ap = _run("pages/6_Appointments.py")
     assert ap.title[0].value == "Appointments"
+    assert any("Declined" in m.label for m in ap.metric)
     save = next(b for b in ap.button if b.label.startswith("Save "))
     save.click().run()
     assert not ap.exception, ap.exception

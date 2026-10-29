@@ -2,7 +2,8 @@
 
 Picking a truck snapshots its loads (stop order, ETA, volume, contact) so the list stays
 as it was requested even if the plan is edited later; the planner then sets each
-shipment's status (requested / pending / confirmed) on the Appointments page.
+shipment's status (requested / pending / confirmed / declined) on the Appointments page.
+Rows are kept as history, so the confirmed and declined share can be tracked over time.
 """
 
 from __future__ import annotations
@@ -11,7 +12,10 @@ from typing import Any
 
 from routeopt.domain import Plan, Stop, clock
 
-STATUSES = ["Not requested", "Requested", "Pending", "Confirmed"]
+STATUSES = ["Not requested", "Requested", "Pending", "Confirmed", "Declined"]
+# a stop's outcome: confirmed when every shipment is, declined (the customer can't take
+# it that day; dropped from the route) when any is, else still open
+OUTCOMES = ["Confirmed", "Declined", "Open"]
 
 
 def appointment_rows(plan: Plan, stops: list[Stop], truck_number: str) -> list[dict[str, Any]]:
@@ -48,3 +52,55 @@ def appointment_rows(plan: Plan, stops: list[Stop], truck_number: str) -> list[d
                     }
                 )
     return rows
+
+
+def stop_outcome(statuses: list[str]) -> str:
+    if statuses and all(s == "Confirmed" for s in statuses):
+        return "Confirmed"
+    if any(s == "Declined" for s in statuses):
+        return "Declined"
+    return "Open"
+
+
+def stop_outcomes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per picked stop: delivery day, truck, volume and its outcome."""
+    stops: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for r in rows:
+        key = (r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])
+        st = stops.setdefault(
+            key,
+            {
+                "delivery_date": r["delivery_date"],
+                "run_id": r["run_id"],
+                "truck": r["truck"],
+                "load_seq": r["load_seq"],
+                "stop_seq": r["stop_seq"],
+                "customer": r["customer"],
+                "volume_cuft": 0.0,
+                "statuses": [],
+            },
+        )
+        st["volume_cuft"] += r["volume_cuft"] or 0.0
+        st["statuses"].append(r["status"])
+    out = []
+    for st in stops.values():
+        st["outcome"] = stop_outcome(st.pop("statuses"))
+        out.append(st)
+    return out
+
+
+def outcome_summary(stops: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    """Per outcome: stops, % of stops, cu ft, % of cu ft."""
+    n = len(stops) or 1
+    vol = sum(s["volume_cuft"] for s in stops) or 1.0
+    out: dict[str, dict[str, float]] = {}
+    for o in OUTCOMES:
+        sel = [s for s in stops if s["outcome"] == o]
+        v = sum(s["volume_cuft"] for s in sel)
+        out[o] = {
+            "stops": len(sel),
+            "stops_pct": round(100 * len(sel) / n, 1),
+            "volume": round(v, 1),
+            "volume_pct": round(100 * v / vol, 1),
+        }
+    return out

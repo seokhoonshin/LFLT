@@ -44,3 +44,48 @@ def test_picked_truck_is_listed_and_statuses_are_saved(tmp_path) -> None:  # typ
     assert again["status"] == "Confirmed" and again["note"] == "ok"
     repo.unselect_truck(plan.run_id, truck.number)
     assert repo.list_appointments() == [] and repo.selected_trucks(plan.run_id) == set()
+
+
+def test_stop_outcomes_and_summary() -> None:
+    import datetime as dt
+
+    from routeopt.appointments import outcome_summary, stop_outcomes
+
+    day = dt.date(2026, 10, 30)
+
+    def row(stop: int, status: str, vol: float) -> dict:
+        return {
+            "run_id": "r",
+            "truck": "T01",
+            "load_seq": 1,
+            "stop_seq": stop,
+            "delivery_date": day,
+            "customer": "c",
+            "volume_cuft": vol,
+            "status": status,
+        }
+
+    rows = [
+        row(1, "Confirmed", 100),
+        row(1, "Confirmed", 50),
+        row(2, "Confirmed", 10),
+        row(2, "Declined", 30),  # one declined shipment drops the stop
+        row(3, "Pending", 60),
+        row(4, "Confirmed", 50),
+    ]
+    stops = {s["stop_seq"]: s for s in stop_outcomes(rows)}
+    assert [stops[i]["outcome"] for i in (1, 2, 3, 4)] == [
+        "Confirmed",
+        "Declined",
+        "Open",
+        "Confirmed",
+    ]
+    summary = outcome_summary(list(stops.values()))
+    assert summary["Confirmed"] == {
+        "stops": 2,
+        "stops_pct": 50.0,
+        "volume": 200.0,
+        "volume_pct": 66.7,
+    }
+    assert summary["Declined"]["stops"] == 1 and summary["Declined"]["stops_pct"] == 25.0
+    assert summary["Open"]["volume"] == 60.0
