@@ -33,22 +33,43 @@ if ($Update) {
 }
 
 # ---- OSRM ------------------------------------------------------------------------------
+# Docker writes its errors to stderr; with ErrorActionPreference = Stop, Windows PowerShell
+# would turn that into a fatal error, so docker is called with Continue here.
+function Invoke-Docker([string[]]$DockerArgs) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { $null = & docker @DockerArgs 2>&1; return $LASTEXITCODE -eq 0 }
+    catch { return $false }
+    finally { $ErrorActionPreference = $prev }
+}
 if (Get-Command docker -ErrorAction SilentlyContinue) {
-    & docker info *> $null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Invoke-Docker @("info"))) {
         Write-Warning "Docker Desktop is not running: start it, or runs will use straight-line estimates."
     } else {
-        Write-Host "Starting OSRM ($OsrmContainer) ..."
-        & docker start $OsrmContainer *> $null
-        $ok = $false
-        for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
-            try {
-                $r = Invoke-RestMethod "$OsrmUrl/nearest/v1/driving/-117.4319,34.1511" -TimeoutSec 2
-                $ok = $r.code -eq "Ok"
-            } catch { Start-Sleep -Seconds 2 }
+        # the CA container (port 5001), else the one docker\osrm\docker-compose.yml makes (5000)
+        $candidates = @(@($OsrmContainer, $OsrmUrl), @("routeopt-osrm", "http://localhost:5000"))
+        $started = $null
+        foreach ($c in $candidates) {
+            if (Invoke-Docker @("start", $c[0])) { $started = $c; break }
         }
-        if ($ok) { Write-Host "OSRM is up at $OsrmUrl" }
-        else { Write-Warning "OSRM did not answer at $OsrmUrl - check the container in Docker Desktop." }
+        if (-not $started) {
+            Write-Warning ("No OSRM container found ($OsrmContainer or routeopt-osrm). Build it once: " +
+                "cd docker\osrm; .\setup.ps1; docker compose up -d  - until then runs use straight-line estimates.")
+        } else {
+            $name, $url = $started
+            Write-Host "Starting OSRM ($name) ..."
+            $ok = $false
+            for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+                try {
+                    $r = Invoke-RestMethod "$url/nearest/v1/driving/-117.4319,34.1511" -TimeoutSec 2
+                    $ok = $r.code -eq "Ok"
+                } catch { Start-Sleep -Seconds 2 }
+            }
+            if ($ok) {
+                Write-Host "OSRM is up at $url"
+                $env:OSRM_URL = $url  # the app uses this container
+            } else { Write-Warning "OSRM did not answer at $url - check the container in Docker Desktop." }
+        }
     }
 } else {
     Write-Warning "Docker is not installed - runs will use straight-line estimates."
