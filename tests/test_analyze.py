@@ -13,6 +13,7 @@ from routeopt.analyze import (
     in_pg,
     pg_number,
     prepare,
+    rdd_split,
     read_upload,
     snapshot_day,
     summary_table,
@@ -72,12 +73,21 @@ def test_pivots_match_the_rows() -> None:
     assert t.loc[("LGC7", "Requested"), "Volume"] == 0
     assert t.loc[("Grand Total", ""), "Volume"] == 250 and t.loc[("Grand Total", ""), "Loads"] == 3
     assert t.loc[("Grand Total", ""), "Shipments"] == 4
-    pg20 = aging_pivot(in_pg(df, {"20"}), "RDD_AGING_BUCKET")
-    assert pg20.loc[("LGC2", "Hold"), "Before RDD"] == 100
-    assert pg20.loc[("LGC2", "Hold"), "0-3 past"] == 50
-    pg3050 = aging_pivot(in_pg(df, {"30", "50"}), "DROP_AGING_BUCKET")
-    assert pg3050.loc[("LGC7", "Hold"), "31+"] == 70
-    assert pg3050.loc[("Grand Total", ""), "Grand Total"] == 100
+    origins = ["LGC2", "LGC7", "LGC8"]
+    pg20 = rdd_split(in_pg(df, {"20"}), origins)
+    # every warehouse x Hold / Requested is a row, 0 when empty
+    assert len(pg20) == 7 and pg20.loc[("LGC8", "Requested"), "Grand Total"] == 0
+    assert pg20.loc[("LGC2", "Hold"), "Not past RDD"] == 100  # "Before RDD"
+    assert pg20.loc[("LGC2", "Hold"), "Past RDD"] == 50  # "0-3 past"
+    assert pg20.loc[("LGC2", "Requested"), "Past RDD"] == 0
+    assert list(pg20.columns) == ["Past RDD", "Not past RDD", "Grand Total"]
+    days = df.assign(RDD_AGING_DAYS=[-2, 0, 1, None])  # with days: 0 = due today, not past
+    by_days = rdd_split(in_pg(days, {"20"}), origins)
+    assert by_days.loc[("LGC2", "Hold"), "Not past RDD"] == 150
+    pg = aging_pivot(in_pg(df, {"30", "50", "80"}), "DROP_AGING_BUCKET", origins)
+    assert list(pg.columns) == ["0-3", "4-7", "8-14", "15-30", "31+", "Grand Total"]
+    assert pg.loc[("LGC7", "Hold"), "31+"] == 70 and pg.loc[("LGC8", "Hold"), "0-3"] == 0
+    assert pg.loc[("Grand Total", ""), "Grand Total"] == 100 and len(pg) == 7
 
 
 def test_snapshots_are_kept_per_day_and_replaced(tmp_path) -> None:  # type: ignore[no-untyped-def]

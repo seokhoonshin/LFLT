@@ -22,6 +22,7 @@ from routeopt.analyze import (
     detect_level,
     in_pg,
     prepare,
+    rdd_split,
     read_upload,
     snapshot_day,
     summary_table,
@@ -169,7 +170,8 @@ def aging_view(level: str) -> None:
     day = c1.selectbox(
         "Snapshot day", days, format_func=lambda d: d.strftime("%a %Y-%m-%d"), key=f"day-{level}"
     )
-    origins = sorted(df["ORIGIN_LOCATION_ID"].unique())
+    # every warehouse is listed (0 when it has nothing that day)
+    origins = sorted(set(df["ORIGIN_LOCATION_ID"].unique()) | {"LGC2", "LGC7", "LGC8"})
     pick = c2.multiselect("Origin", origins, default=origins, key=f"org-{level}")
     cur = df[(df["SNAPSHOT_DATE"] == day) & df["ORIGIN_LOCATION_ID"].isin(pick)]
     if cur.empty:
@@ -187,19 +189,11 @@ def aging_view(level: str) -> None:
 
     a, b = st.columns(2)
     with a:
-        st.markdown("##### PG 20 — volume by RDD aging")
-        t = aging_pivot(in_pg(cur, {"20"}), "RDD_AGING_BUCKET")
-        if t.empty:
-            st.caption("No PG 20 rows.")
-        else:
-            show_table(t)
+        st.markdown("##### PG 20 — volume past / not past RDD")
+        show_table(rdd_split(in_pg(cur, {"20"}), pick))
     with b:
-        st.markdown("##### PG 30 & 50 — volume by Drop in TMS aging")
-        t = aging_pivot(in_pg(cur, {"30", "50"}), "DROP_AGING_BUCKET")
-        if t.empty:
-            st.caption("No PG 30 / 50 rows.")
-        else:
-            show_table(t)
+        st.markdown("##### PG 30, 50 & 80 — volume by Drop in TMS aging")
+        show_table(aging_pivot(in_pg(cur, {"30", "50", "80"}), "DROP_AGING_BUCKET", pick))
     if level == "load":
         st.caption("A load with mixed plan groups counts in every table its groups match.")
 

@@ -119,25 +119,62 @@ def summary_table(df: pd.DataFrame, level: str) -> pd.DataFrame:
     return out
 
 
-def aging_pivot(df: pd.DataFrame, bucket: str, value: str = "VOLUME") -> pd.DataFrame:
-    """Origin x status rows, aging buckets as columns, ``value`` summed; with totals."""
+def _full_grid(
+    df: pd.DataFrame, origins: list[str], column: str, order: list[str], value: str
+) -> pd.DataFrame:
+    """Every origin x Hold / Requested as rows (0 when empty), ``order`` as columns,
+    ``value`` summed; Grand Total row and column."""
+    index = pd.MultiIndex.from_product([origins, STATUSES], names=["Origin", "Status"])
     if df.empty:
-        return pd.DataFrame()
-    t = pd.pivot_table(
-        df,
-        index=["ORIGIN_LOCATION_ID", "LOAD_STATUS"],
-        columns=bucket,
-        values=value,
-        aggfunc="sum",
-        fill_value=0,
-        observed=False,
-        margins=True,
-        margins_name="Grand Total",
-    )
-    t.index.names = ["Origin", "Status"]
+        t = pd.DataFrame(0.0, index=index, columns=order)
+    else:
+        t = (
+            df.assign(_col=df[column].astype(str))
+            .groupby(["ORIGIN_LOCATION_ID", "LOAD_STATUS", "_col"], observed=True)[value]
+            .sum()
+            .unstack("_col")
+            .reindex(index=index, columns=order)
+            .fillna(0.0)
+        )
+        t.index.names = ["Origin", "Status"]
     t.columns.name = None
-    keep = [c for c in t.columns if c == "Grand Total" or t[c].sum() != 0]
-    return t[keep].round(1)
+    t["Grand Total"] = t.sum(axis=1)
+    t.loc[("Grand Total", ""), :] = t.sum(axis=0)
+    return t.round(1)
+
+
+def aging_pivot(
+    df: pd.DataFrame,
+    bucket: str,
+    origins: list[str],
+    value: str = "VOLUME",
+) -> pd.DataFrame:
+    """Drop in TMS / RDD aging buckets as columns (all of them; Unknown only if any)."""
+    order = DROP_BUCKETS if bucket == "DROP_AGING_BUCKET" else RDD_BUCKETS
+    if df.empty or not (df[bucket].astype(str) == "Unknown").any():
+        order = [b for b in order if b != "Unknown"]
+    return _full_grid(df, origins, bucket, order, value)
+
+
+def rdd_split(df: pd.DataFrame, origins: list[str], value: str = "VOLUME") -> pd.DataFrame:
+    """Past RDD (today is after RDD_TO) vs Not past RDD; No RDD only if any."""
+    if df.empty:
+        return _full_grid(df, origins, "RDD_STATE", ["Past RDD", "Not past RDD"], value)
+    if "RDD_AGING_DAYS" in df.columns:
+        days = pd.to_numeric(df["RDD_AGING_DAYS"], errors="coerce")
+        state = ["No RDD" if pd.isna(d) else "Past RDD" if d > 0 else "Not past RDD" for d in days]
+    else:
+        state = [
+            "No RDD"
+            if str(b) == "Unknown"
+            else "Not past RDD"
+            if str(b) == "Before RDD"
+            else "Past RDD"
+            for b in df["RDD_AGING_BUCKET"]
+        ]
+    df = df.assign(RDD_STATE=state)
+    order = ["Past RDD", "Not past RDD"] + (["No RDD"] if "No RDD" in state else [])
+    return _full_grid(df, origins, "RDD_STATE", order, value)
 
 
 def daily_trend(df: pd.DataFrame, split: str, value: str = "VOLUME") -> pd.DataFrame:

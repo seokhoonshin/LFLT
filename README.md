@@ -168,8 +168,9 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    stops over any range of days, grouped by day, week, month or year.  *Aging — load
    level* / *Aging — shipment level*: upload the Plan 7774 aging query result (load or
    shipment version; the level is detected) once a day; every snapshot day is kept.
-   Per day: the Origin × Hold / Requested summary (loads, volume, order value), PG 20 by
-   RDD aging and PG 30 & 50 by Drop in TMS aging (volume), a daily trend chart (split by
+   Per day: the Origin × Hold / Requested summary (loads, volume, order value), PG 20
+   volume past / not past RDD and PG 30, 50 & 80 volume by Drop in TMS aging (every
+   warehouse × Hold / Requested listed, 0 when empty), a daily trend chart (split by
    status, origin, aging or plan group) and a build-your-own pivot.
 
 ### Command line
