@@ -253,3 +253,19 @@ class AppointmentRow(Base):
     stage: Mapped[str | None] = mapped_column(String(16), nullable=True)
     selected_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class AgingSnapshotRow(Base):
+    """One uploaded aging query result (Analyze page): a snapshot day, at load or shipment
+    level, stored as a JSON list of rows.  A new upload for the same day and level
+    replaces it."""
+
+    __tablename__ = "aging_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str] = mapped_column(String(16), index=True)  # "load" / "shipment"
+    snapshot_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    data_json: Mapped[str] = mapped_column(Text)
+    source_name: Mapped[str] = mapped_column(String(255), default="")
+    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

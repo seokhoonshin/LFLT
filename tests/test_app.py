@@ -144,6 +144,35 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     next(t for t in fin.text_input if t.label == "Find a load by load ID").input("LD1").run()
     assert not fin.exception, fin.exception
     assert any(first["truck"] in str(m.value) for m in fin.markdown)
+    an = _run("pages/7_Analyze.py")  # the results over time moved to Analyze
     for period in ("Week", "Month", "Year"):
-        next(r for r in fin.radio if r.label == "Group by").set_value(period).run()
-        assert not fin.exception, fin.exception
+        next(r for r in an.radio if r.label == "Group by").set_value(period).run()
+        assert not an.exception, an.exception
+
+
+def test_analyze_page_takes_both_uploads(db_env: Repository) -> None:
+    import io
+
+    import pandas as pd
+
+    from tests.test_analyze import _ship_frame
+
+    at = _run("pages/7_Analyze.py")
+    assert at.title[0].value == "Analyze"
+    ship = _ship_frame()
+    load = ship.drop(columns=["SHIPMENT_ID"]).groupby(
+        ["LOAD_ID", "ORIGIN_LOCATION_ID", "LOAD_STATUS", "PLAN_ID_GRP"], as_index=False
+    ).agg(VOLUME=("VOLUME", "sum"), ORDER_VALUE=("ORDER_VALUE", "sum"),
+          DROP_AGING_BUCKET=("DROP_AGING_BUCKET", "first"),
+          RDD_AGING_BUCKET=("RDD_AGING_BUCKET", "first"),
+          SNAPSHOT_DATE=("SNAPSHOT_DATE", "first"))  # fmt: skip
+    import datetime as dt
+
+    from routeopt.analyze import to_records
+
+    db_env.save_aging("shipment", dt.date(2026, 10, 30), to_records(ship), "s.xlsx")
+    db_env.save_aging("load", dt.date(2026, 10, 30), to_records(load), "l.xlsx")
+    at = _run("pages/7_Analyze.py")
+    assert not at.exception, at.exception
+    assert len(at.dataframe) >= 4  # summary + two aging tables, both levels
+    assert pd is not None and io is not None

@@ -13,13 +13,11 @@ for _p in (_APP.parent, _APP):  # repo root (routeopt package) and app/ (_common
 import datetime as dt
 from itertools import groupby
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from routeopt.appointments import (
     EXPORT_COLUMNS,
-    OUTCOMES,
     STATUSES,
     appointment_rows,
     clock_seconds,
@@ -29,10 +27,7 @@ from routeopt.appointments import (
     load_sheet_rows,
     manual_rows,
     origin_label,
-    outcome_summary,
-    period_key,
     pickup_seconds,
-    stop_outcomes,
     time_text,
     warehouse_address,
     warehouse_label,
@@ -55,8 +50,6 @@ from _common import (
 setup_page("Appointments")
 osrm_status_line()
 repo = get_repo()
-OUTCOME_COLOR = {"Confirmed": "#0ca30c", "Declined": "#d03b3b", "Open": "#9a9a92"}
-OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
 
 st.title("Appointments")
 st.caption(
@@ -75,93 +68,7 @@ def is_reopt(r: dict) -> bool:
     return r.get("stage") == "reoptimized"
 
 
-orig_rows = [r for r in rows if not is_reopt(r)]
-reopt_rows = [r for r in rows if is_reopt(r)]
-orig_keys = {(r["run_id"], r["shipment_id"]) for r in orig_rows}
-# the record: every originally picked stop (declined included) + stops a re-plan added
-stat_rows = orig_rows + [r for r in reopt_rows if (r["run_id"], r["shipment_id"]) not in orig_keys]
-
-# ---- cumulative results: every picked truck, all days --------------------------------
-st.subheader("Results so far (all picked trucks)")
-all_stops = stop_outcomes(stat_rows)
-first, last = min(r["delivery_date"] for r in rows), max(r["delivery_date"] for r in rows)
-span = st.date_input("Delivery days", (first, last), min_value=first, max_value=last)
-lo, hi = (span[0], span[-1]) if isinstance(span, tuple) and span else (first, last)
-in_span = [x for x in all_stops if lo <= x["delivery_date"] <= hi]
-summary = outcome_summary(in_span)
-c = st.columns(4)
-c[0].metric("Stops picked", len(in_span), help="Stops on the trucks picked on Results.")
-for col, outcome in zip(c[1:], OUTCOMES, strict=True):
-    o = summary[outcome]
-    col.metric(
-        f"{OUTCOME_ICON[outcome]} {outcome}",
-        f"{o['stops']:.0f} ({o['stops_pct']:.0f}%)",
-        help=f"{o['volume']:,.0f} cu ft ({o['volume_pct']:.0f}% of the picked volume)",
-    )
-st.caption(
-    "A stop is **Confirmed** when every shipment on it is confirmed, **Declined** when any "
-    "shipment is declined (the customer can't take it that day), otherwise **Open**. "
-    f"Volume: confirmed {summary['Confirmed']['volume']:,.0f} cu ft "
-    f"({summary['Confirmed']['volume_pct']:.0f}%), declined {summary['Declined']['volume']:,.0f} cu ft "
-    f"({summary['Declined']['volume_pct']:.0f}%)."
-)
-period = st.radio(
-    "Group by",
-    ["Day", "Week", "Month", "Year"],
-    horizontal=True,
-    help="Week = Monday to Sunday. Use Delivery days above to filter the range.",
-)
-if in_span:
-    frame = pd.DataFrame(in_span)
-    keys = [period_key(d, period) for d in frame["delivery_date"]]
-    frame["start"] = [k[0] for k in keys]
-    frame["period"] = [k[1] for k in keys]
-    by_p = (
-        frame.groupby(["start", "period", "outcome"])
-        .agg(stops=("outcome", "size"), volume=("volume_cuft", "sum"))
-        .reset_index()
-        .sort_values("start")
-    )
-    by_p["share"] = by_p["stops"] / by_p.groupby("period")["stops"].transform("sum")
-    by_p["volume"] = by_p["volume"].round(0)
-    by_p["outcome_order"] = by_p["outcome"].map(OUTCOMES.index)
-    order = list(dict.fromkeys(by_p["period"]))
-    chart = (
-        alt.Chart(by_p)
-        .mark_bar(size=22 if len(order) < 25 else 10, stroke=None)
-        .encode(
-            x=alt.X("period:N", title=period, sort=order, axis=alt.Axis(labelAngle=0)),
-            y=alt.Y("stops:Q", title="Stops", axis=alt.Axis(tickMinStep=1, grid=True)),
-            color=alt.Color(
-                "outcome:N",
-                title=None,
-                scale=alt.Scale(domain=OUTCOMES, range=[OUTCOME_COLOR[o] for o in OUTCOMES]),
-                legend=alt.Legend(orient="top"),
-            ),
-            order=alt.Order("outcome_order:Q"),
-            tooltip=[
-                alt.Tooltip("period:N", title=period),
-                alt.Tooltip("outcome:N", title="Outcome"),
-                alt.Tooltip("stops:Q", title="Stops"),
-                alt.Tooltip("share:Q", title=f"Share of the {period.lower()}", format=".0%"),
-                alt.Tooltip("volume:Q", title="cu ft", format=",.0f"),
-            ],
-        )
-        .properties(height=260)
-    )
-    st.altair_chart(chart, use_container_width=True)
-    with st.expander("Table view"):
-        table = (
-            by_p.pivot_table(index="period", columns="outcome", values="stops", fill_value=0)
-            .reindex(index=order)
-            .reindex(columns=OUTCOMES, fill_value=0)
-        )
-        table["Total"] = table.sum(axis=1)
-        for o in ("Confirmed", "Declined"):
-            table[f"{o} %"] = (100 * table[o] / table["Total"]).round(0)
-        vol = by_p.pivot_table(index="period", columns="outcome", values="volume", fill_value=0)
-        table["Confirmed cu ft"] = vol.reindex(index=order).get("Confirmed", 0)
-        st.dataframe(table, use_container_width=True)
+st.caption("The confirmed / declined results over days are on the **Analyze** page.")
 
 # ---- one day: set statuses -------------------------------------------------------------
 st.subheader("Set statuses")

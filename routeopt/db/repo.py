@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from routeopt.config import RunSettings
 from routeopt.db.models import (
+    AgingSnapshotRow,
     AppointmentRow,
     AppStateRow,
     Base,
@@ -783,6 +784,59 @@ class Repository:
                             setattr(twin, k, v)
                         twin.updated_at = hub_now()
         return n
+
+    # ---- aging snapshots (Analyze) ------------------------------------------------------
+    def save_aging(
+        self, level: str, day: dt.date, rows: list[dict[str, Any]], source_name: str = ""
+    ) -> None:
+        """Store one day's aging rows for a level, replacing an earlier upload of that day."""
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AgingSnapshotRow).where(
+                    AgingSnapshotRow.level == level, AgingSnapshotRow.snapshot_date == day
+                )
+            )
+            session.add(
+                AgingSnapshotRow(
+                    level=level,
+                    snapshot_date=day,
+                    rows=len(rows),
+                    data_json=_dumps(rows),
+                    source_name=source_name[:255],
+                )
+            )
+
+    def list_aging(self, level: str) -> list[tuple[dt.date, int, str]]:
+        """(snapshot day, rows, file name) of every stored upload of a level, newest first."""
+        with self._sf() as session:
+            return [
+                (r.snapshot_date, r.rows, r.source_name)
+                for r in session.execute(
+                    select(AgingSnapshotRow)
+                    .where(AgingSnapshotRow.level == level)
+                    .order_by(AgingSnapshotRow.snapshot_date.desc())
+                ).scalars()
+            ]
+
+    def load_aging(self, level: str) -> list[dict[str, Any]]:
+        """Every stored row of a level (each carries its SNAPSHOT_DATE)."""
+        out: list[dict[str, Any]] = []
+        with self._sf() as session:
+            for r in session.execute(
+                select(AgingSnapshotRow).where(AgingSnapshotRow.level == level)
+            ).scalars():
+                for row in json.loads(r.data_json):
+                    row["SNAPSHOT_DATE"] = r.snapshot_date.isoformat()
+                    out.append(row)
+        return out
+
+    def delete_aging(self, level: str, day: dt.date) -> None:
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AgingSnapshotRow).where(
+                    AgingSnapshotRow.level == level, AgingSnapshotRow.snapshot_date == day
+                )
+            )
 
     # ---- caches -----------------------------------------------------------------------
     def travel_cache_store(self) -> DbTravelCacheStore:
