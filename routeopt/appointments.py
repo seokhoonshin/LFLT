@@ -8,6 +8,7 @@ Rows are kept as history, so the confirmed and declined share can be tracked ove
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import re
 from typing import Any
@@ -383,3 +384,37 @@ def manual_rows(
     if not out:
         raise ValueError("Everything entered is already on this load.")
     return out
+
+
+def finalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The loads that go: per run the latest set (re-optimized if there is one, else the
+    original), keeping only the stops whose every shipment is Confirmed."""
+    reopt_runs = {r["run_id"] for r in rows if r.get("stage") == "reoptimized"}
+    current = [
+        r
+        for r in rows
+        if (r.get("stage") == "reoptimized") == (r["run_id"] in reopt_runs)
+        and r["stop_seq"] < 900
+    ]
+    statuses: dict[tuple[Any, ...], list[str]] = {}
+    for r in current:
+        key = (r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])
+        statuses.setdefault(key, []).append(r["status"])
+    return [
+        {**r, "stage": "finalized"}
+        for r in current
+        if stop_outcome(statuses[(r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])])
+        == "Confirmed"
+    ]
+
+
+def period_key(day: dt.date, period: str) -> tuple[dt.date, str]:
+    """(sort key, label) of the day / week (Mon-Sun) / month / year a delivery day is in."""
+    if period == "Week":
+        start = day - dt.timedelta(days=day.weekday())
+        return start, f"Wk {start:%m/%d}"
+    if period == "Month":
+        return day.replace(day=1), f"{day:%Y-%m}"
+    if period == "Year":
+        return day.replace(month=1, day=1), f"{day:%Y}"
+    return day, f"{day:%m/%d}"

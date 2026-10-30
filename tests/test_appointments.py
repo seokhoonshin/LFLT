@@ -347,3 +347,40 @@ def test_manual_rows_add_the_whole_stop_as_the_last_stop(tmp_path) -> None:  # t
     repo.init_schema()
     assert repo.add_appointments(added + typed) == 3
     assert {r["shipment_id"] for r in repo.list_appointments()} == {"X11", "X22", "NOPE123"}
+
+
+def test_finalized_keeps_only_confirmed_stops_of_the_latest_set() -> None:
+    from routeopt.appointments import finalized_rows
+
+    rows = _rows_for_export()  # stop 1 confirmed (2 shipments), 2 declined, 3 requested
+    final = finalized_rows(rows)
+    assert {r["shipment_id"] for r in final} == {"a1", "a2"}
+    assert {r["stage"] for r in final} == {"finalized"}
+    # a stop is final only when every shipment on it is confirmed
+    half = [dict(r) for r in rows]
+    half[1]["status"] = "Pending"
+    assert finalized_rows(half) == []
+    # with a re-plan, the re-plan is the set that goes
+    reopt = [{**r, "id": 100 + r["id"], "stage": "reoptimized"} for r in rows if r["id"] in (1, 4)]
+    reopt[1]["status"] = "Confirmed"
+    final2 = finalized_rows(rows + reopt)
+    assert {r["shipment_id"] for r in final2} == {"a1", "c1"}
+
+
+def test_period_key_groups_days_weeks_months_years() -> None:
+    import datetime as dt
+
+    from routeopt.appointments import period_key
+
+    d = dt.date(2026, 11, 4)  # a Wednesday
+    assert period_key(d, "Day") == (d, "11/04")
+    assert period_key(d, "Week") == (dt.date(2026, 11, 2), "Wk 11/02")
+    assert period_key(d, "Month") == (dt.date(2026, 11, 1), "2026-11")
+    assert period_key(d, "Year") == (dt.date(2026, 1, 1), "2026")
+
+
+def test_load_map_html_draws_the_warehouse_and_the_stops() -> None:
+    from routeopt.export.mapping import load_map_html
+
+    html = load_map_html("LGC8", [(34.0, -117.5, "2", "2 · A"), (34.1, -117.6, "3", "3 · B")])
+    assert "Sierra Ave" in html and "2 · A" in html and "3 · B" in html

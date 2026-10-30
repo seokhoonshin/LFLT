@@ -225,3 +225,37 @@ def map_html(
 ) -> str:
     """The map as a standalone HTML document."""
     return str(build_map(plan, stops, settings, geometry_fn, only).get_root().render())
+
+
+def load_map_html(
+    dc: str,
+    stops: list[tuple[float, float, str, str]],
+    geometry_fn: GeometryFn | None = None,
+    color: str = "#1f77b4",
+) -> str:
+    """One load on its own map: the warehouse, then ``stops`` in order as
+    (lat, lon, label, tooltip), and back; road lines when ``geometry_fn`` gives them."""
+    depot = SITE_BY_CODE.get(dc) or SITES[0]
+    m = folium.Map(location=[depot.lat, depot.lon], zoom_start=10, control_scale=True)
+    Fullscreen().add_to(m)
+    folium.Marker(
+        [depot.lat, depot.lon],
+        popup=f"<b>{depot.name}</b><br/>{depot.address}",
+        tooltip=f"1 · {depot.name} warehouse",
+        icon=folium.Icon(color="black", icon="home", prefix="fa"),
+    ).add_to(m)
+    coords: list[Coord] = [(depot.lat, depot.lon)]
+    for lat, lon, label, tip in stops:
+        folium.Marker([lat, lon], icon=_badge(label, color), tooltip=tip).add_to(m)
+        coords.append((lat, lon))
+    coords.append((depot.lat, depot.lon))
+    if len(coords) > 2:
+        line = geometry_fn(coords) if geometry_fn is not None else None
+        folium.PolyLine(line or coords, color=color, weight=4, opacity=0.85).add_to(m)
+        m.fit_bounds(
+            [
+                [min(p[0] for p in coords), min(p[1] for p in coords)],
+                [max(p[0] for p in coords), max(p[1] for p in coords)],
+            ]
+        )
+    return str(m.get_root().render())

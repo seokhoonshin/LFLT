@@ -16,23 +16,36 @@ from itertools import groupby
 import altair as alt
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from routeopt.appointments import (
     EXPORT_COLUMNS,
     OUTCOMES,
     STATUSES,
     appointment_rows,
     export_stops_by_load,
+    finalized_rows,
     group_by_stop,
+    load_sheet_rows,
     manual_rows,
     origin_label,
     outcome_summary,
+    period_key,
     stop_outcomes,
     warehouse_address,
     warehouse_label,
 )
+from routeopt.export.mapping import load_map_html
 from routeopt.reoptimize import declined_stop_ids, replan
+from routeopt.travel.osrm import OSRMProvider
 
-from _common import get_repo, load_record, osrm_status_line, setup_page
+from _common import (
+    get_config,
+    get_repo,
+    load_record,
+    osrm_healthy,
+    osrm_status_line,
+    setup_page,
+)
 
 setup_page("Appointments")
 osrm_status_line()
@@ -87,22 +100,32 @@ st.caption(
     f"({summary['Confirmed']['volume_pct']:.0f}%), declined {summary['Declined']['volume']:,.0f} cu ft "
     f"({summary['Declined']['volume_pct']:.0f}%)."
 )
+period = st.radio(
+    "Group by",
+    ["Day", "Week", "Month", "Year"],
+    horizontal=True,
+    help="Week = Monday to Sunday. Use Delivery days above to filter the range.",
+)
 if in_span:
-    by_day = (
-        pd.DataFrame(in_span)
-        .groupby(["delivery_date", "outcome"])
+    frame = pd.DataFrame(in_span)
+    keys = [period_key(d, period) for d in frame["delivery_date"]]
+    frame["start"] = [k[0] for k in keys]
+    frame["period"] = [k[1] for k in keys]
+    by_p = (
+        frame.groupby(["start", "period", "outcome"])
         .agg(stops=("outcome", "size"), volume=("volume_cuft", "sum"))
         .reset_index()
+        .sort_values("start")
     )
-    by_day["share"] = by_day["stops"] / by_day.groupby("delivery_date")["stops"].transform("sum")
-    by_day["day"] = pd.to_datetime(by_day["delivery_date"]).dt.strftime("%m/%d")
-    by_day["volume"] = by_day["volume"].round(0)
-    by_day["outcome_order"] = by_day["outcome"].map(OUTCOMES.index)
+    by_p["share"] = by_p["stops"] / by_p.groupby("period")["stops"].transform("sum")
+    by_p["volume"] = by_p["volume"].round(0)
+    by_p["outcome_order"] = by_p["outcome"].map(OUTCOMES.index)
+    order = list(dict.fromkeys(by_p["period"]))
     chart = (
-        alt.Chart(by_day)
-        .mark_bar(size=22, stroke=None)
+        alt.Chart(by_p)
+        .mark_bar(size=22 if len(order) < 25 else 10, stroke=None)
         .encode(
-            x=alt.X("day:N", title="Delivery day", sort=None, axis=alt.Axis(labelAngle=0)),
+            x=alt.X("period:N", title=period, sort=order, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("stops:Q", title="Stops", axis=alt.Axis(tickMinStep=1, grid=True)),
             color=alt.Color(
                 "outcome:N",
@@ -112,10 +135,10 @@ if in_span:
             ),
             order=alt.Order("outcome_order:Q"),
             tooltip=[
-                alt.Tooltip("day:N", title="Day"),
+                alt.Tooltip("period:N", title=period),
                 alt.Tooltip("outcome:N", title="Outcome"),
                 alt.Tooltip("stops:Q", title="Stops"),
-                alt.Tooltip("share:Q", title="Share of the day", format=".0%"),
+                alt.Tooltip("share:Q", title=f"Share of the {period.lower()}", format=".0%"),
                 alt.Tooltip("volume:Q", title="cu ft", format=",.0f"),
             ],
         )
@@ -123,12 +146,16 @@ if in_span:
     )
     st.altair_chart(chart, use_container_width=True)
     with st.expander("Table view"):
-        table = by_day.pivot_table(
-            index="delivery_date", columns="outcome", values="stops", fill_value=0
-        ).reindex(columns=OUTCOMES, fill_value=0)
+        table = (
+            by_p.pivot_table(index="period", columns="outcome", values="stops", fill_value=0)
+            .reindex(index=order)
+            .reindex(columns=OUTCOMES, fill_value=0)
+        )
         table["Total"] = table.sum(axis=1)
         for o in ("Confirmed", "Declined"):
             table[f"{o} %"] = (100 * table[o] / table["Total"]).round(0)
+        vol = by_p.pivot_table(index="period", columns="outcome", values="volume", fill_value=0)
+        table["Confirmed cu ft"] = vol.reindex(index=order).get("Confirmed", 0)
         st.dataframe(table, use_container_width=True)
 
 # ---- one day: set statuses -------------------------------------------------------------
@@ -297,6 +324,70 @@ def add_form(stage: str, run_id: str, truck: str, items: list[dict], load_seqs: 
                 st.rerun()
 
 
+@st.cache_resource
+def _geometry_provider():  # type: ignore[no-untyped-def]
+    cfg = get_config()
+    return OSRMProvider(cfg.osrm_url, timeout_s=cfg.osrm_timeout_s)
+
+
+def geometry(coords):  # type: ignore[no-untyped-def]
+    """Road lines from OSRM when it is up (cached per route), else straight lines."""
+    if not osrm_healthy():
+        return None
+    cache: dict = st.session_state.setdefault("geometry_cache", {})
+    key = tuple(coords)
+    if key not in cache:
+        try:
+            cache[key] = _geometry_provider().route_geometry(list(coords))
+        except Exception:  # pragma: no cover - map only
+            cache[key] = None
+    return cache[key]
+
+
+def load_map(run_id: str, load_items: list[dict]) -> None:
+    """The load on its own map: warehouse, then its live (not declined) stops in order."""
+    by_id = {s.stop_id: s for s in load_record(run_id).stops}
+    points, missing = [], 0
+    for s in sorted(group_by_stop(load_items), key=lambda x: x["stop_seq"]):
+        if s["stop_seq"] >= 900 or s["status"] == "Declined":
+            continue
+        stop = by_id.get(s["stop_id"])
+        if stop is None or stop.latitude is None:
+            missing += 1
+            continue
+        label = f"{len(points) + 2}"
+        points.append((stop.latitude, stop.longitude, label, f"{label} · {s['customer']}"))
+    components.html(
+        load_map_html(load_items[0]["dc"], points, geometry_fn=geometry),
+        height=420,
+        scrolling=False,
+    )
+    if missing:
+        st.caption(f"{missing} stop(s) added by hand have no map position.")
+
+
+def load_tools(
+    stage: str,
+    stage_rows: list[dict],
+    run_id: str,
+    truck: str,
+    items: list[dict],
+    load_seqs: list[int],
+) -> None:
+    """Per load: Excel download and a Map toggle (the map opens below)."""
+    for load_seq in load_seqs:
+        c1, c2, _ = st.columns([2, 1, 4])
+        c1.download_button(
+            f"Download {truck} · Load {load_seq}",
+            export_stops_by_load(stage_rows, only=(run_id, truck, load_seq)),
+            file_name=f"appointments_{day.isoformat()}_{stage}_{truck.split()[0]}_L{load_seq}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl-{stage}-{run_id}-{truck}-{load_seq}",
+        )
+        if c2.toggle("Map", key=f"map-{stage}-{run_id}-{truck}-{load_seq}"):
+            load_map(run_id, [r for r in items if r["load_seq"] == load_seq])
+
+
 def render(stage_rows: list[dict], stage: str) -> None:
     """Metrics, downloads and the editable tables of one set (original / re-optimized)."""
     counted = group_by_stop(stage_rows) if by_stop else stage_rows
@@ -402,15 +493,7 @@ def render(stage_rows: list[dict], stage: str) -> None:
                 n = repo.update_appointments(changes)
                 st.toast(f"{truck}: {n} change(s) saved.")
                 st.rerun()
-        dl = st.columns(max(len(load_seqs), 1) + 2)
-        for col, load_seq in zip(dl, load_seqs, strict=False):
-            col.download_button(
-                f"Download {truck} · Load {load_seq}",
-                export_stops_by_load(stage_rows, only=(run_id, truck, load_seq)),
-                file_name=f"appointments_{day.isoformat()}_{stage}_{truck.split()[0]}_L{load_seq}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"dl-{stage}-{run_id}-{truck}-{load_seq}",
-            )
+        load_tools(stage, stage_rows, run_id, truck, items, load_seqs)
         with st.expander(f"Add a stop to {truck} by hand"):
             add_form(stage, run_id, truck, items, load_seqs)
         if stage != "original":
@@ -425,14 +508,59 @@ def render(stage_rows: list[dict], stage: str) -> None:
                 st.rerun()
 
 
+def render_final(final_rows: list[dict]) -> None:
+    """Read-only finalized loads: the export columns (warehouse first), shipments, status;
+    per load a download and a Map toggle."""
+    st.download_button(
+        "Download all finalized loads shown (Excel)",
+        export_stops_by_load(final_rows),
+        file_name=f"finalized_{day.isoformat()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl-all-finalized",
+    )
+    final_sorted = sorted(
+        final_rows,
+        key=lambda r: (r["delivery_date"], r["run_id"], r["truck"], r["load_seq"], r["stop_seq"]),
+    )
+    for (run_id, _v, truck), group in groupby(final_sorted, key=truck_key):
+        items = list(group)
+        stops_here = group_by_stop(items)
+        st.markdown(f"#### {truck} · {len(stops_here)} confirmed stops")
+        st.caption(
+            f"Delivery day {items[0]['delivery_date']:%m/%d/%Y} · run {run_id} · "
+            f"from {origin_label(items[0]['dc'])} · {len(items)} shipments"
+        )
+        load_seqs = []
+        for load_seq, load_items in groupby(stops_here, key=lambda r: r["load_seq"]):
+            load_items = list(load_items)
+            load_seqs.append(load_seq)
+            sheet = load_sheet_rows(load_items)
+            extra = [{"Shipment IDs": None, "Status": None}] + [
+                {"Shipment IDs": x["shipment_ids"], "Status": x["status"]} for x in load_items
+            ]
+            table = pd.DataFrame([a | b for a, b in zip(sheet, extra, strict=True)])
+            table["Volume"] = [v if isinstance(v, str) else f"{v:,.1f}" for v in table["Volume"]]
+            st.markdown(f"**Load {load_seq}** — from {origin_label(load_items[0]['dc'])}")
+            st.dataframe(
+                table,
+                hide_index=True,
+                use_container_width=True,
+                column_config={"date": st.column_config.DateColumn("date", format="MM/DD/YYYY")},
+            )
+        load_tools("finalized", final_rows, run_id, truck, items, load_seqs)
+
+
 if note := st.session_state.pop("replan_note", None):
     st.success(note)
 day_orig = [r for r in day_rows if not is_reopt(r)]
 day_reopt = [r for r in day_rows if is_reopt(r)]
-tab_orig, tab_reopt = st.tabs(
+all_final = finalized_rows(rows)
+day_final = [r for r in all_final if r["delivery_date"] == day]
+tab_orig, tab_reopt, tab_final = st.tabs(
     [
         f"Original ({len(group_by_stop(day_orig))} stops)",
         f"Re-optimized ({len(group_by_stop(day_reopt))} stops)",
+        f"Finalized ({len(group_by_stop(day_final))} stops)",
     ]
 )
 with tab_orig:
@@ -465,3 +593,28 @@ with tab_reopt:
             "same shipment in the Original tab."
         )
         render(day_reopt, "reoptimized")
+with tab_final:
+    st.caption(
+        "The loads that go: the latest set (Re-optimized if there is one, else Original) "
+        "with only the stops whose every shipment is **Confirmed**. Change statuses in the "
+        "other tabs; this one is read-only."
+    )
+    wanted = st.text_input(
+        "Find a load by load ID",
+        placeholder="e.g. 19007709 (any delivery day)",
+        help="Shows every finalized stop of that TMS load ID, whatever the delivery day.",
+    ).strip()
+    shown_final = (
+        [r for r in all_final if wanted and wanted in str(r.get("load_id") or "")]
+        if wanted
+        else day_final
+    )
+    if not shown_final:
+        st.info(
+            f"No finalized load with load ID {wanted}."
+            if wanted
+            else "No load is finalized for this day yet: a stop shows here once every "
+            "shipment on it is Confirmed."
+        )
+    else:
+        render_final(shown_final)

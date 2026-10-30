@@ -132,3 +132,18 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     assert any(r["stage"] == "reoptimized" for r in after)
     assert any(r["status"] == "Declined" and r["stage"] != "reoptimized" for r in after)
     assert any("Re-optimized" in str(sv.value) for sv in ap.success)
+    # a map per load, and the finalized tab with load-ID search
+    next(t for t in ap.toggle if t.label == "Map").set_value(True).run()
+    assert not ap.exception, ap.exception
+    first = db_env.list_appointments()[0]
+    db_env.update_appointments(
+        {r["id"]: {"status": "Confirmed", "load_id": "LD1"} for r in db_env.list_appointments()}
+    )
+    fin = _run("pages/6_Appointments.py")
+    assert any(tab.label.startswith("Finalized") for tab in fin.tabs)
+    next(t for t in fin.text_input if t.label == "Find a load by load ID").input("LD1").run()
+    assert not fin.exception, fin.exception
+    assert any(first["truck"] in str(m.value) for m in fin.markdown)
+    for period in ("Week", "Month", "Year"):
+        next(r for r in fin.radio if r.label == "Group by").set_value(period).run()
+        assert not fin.exception, fin.exception

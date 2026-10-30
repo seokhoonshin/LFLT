@@ -156,8 +156,10 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    same shipment in the other.  *Add a stop … by hand*: type a shipment ID and the whole
    stop it belongs to (every shipment at that address in the upload, details copied) is
    added as the load's last stop; a shipment not in the upload can be typed in.
-   *Results so far* shows the confirmed / declined share
-   over any range of days, with a chart per day.  Results also draws one map per load.
+   *Results so far* shows the confirmed / declined share over any range of days, grouped
+   by day, week, month or year.  A third tab, **Finalized**, keeps only the confirmed stops
+   of the latest set (the loads that go; read-only) and finds a load by its load ID.
+   Every load in the three tabs has a **Map** toggle.
 
 ### Command line
 
