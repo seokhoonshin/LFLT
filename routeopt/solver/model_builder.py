@@ -164,7 +164,18 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
             last_dep[d][j] = time_slot1[d][j]
             last_dep_k[d][j] = time_slotk[d][j]
 
-    travel_cb = routing.RegisterTransitMatrix(travel)
+    # the cost of driving (time dimensions keep the real ``travel``).  Goal "cluster":
+    # stop -> stop driving costs (1 + cluster_weight) x, so a truck takes stops that are
+    # near each other instead of zig-zagging between areas.  Depot legs are unchanged.
+    cost = travel
+    if settings.goal == "cluster" and settings.cluster_weight > 0:
+        factor = 1 + settings.cluster_weight
+        cost = [row[:] for row in travel]
+        for i in range(n_dep, n_nodes):
+            for j in range(n_dep, n_nodes):
+                if i != j:
+                    cost[i][j] = round(travel[i][j] * factor)
+    travel_cb = routing.RegisterTransitMatrix(cost)
     routing.SetArcCostEvaluatorOfAllVehicles(travel_cb)
     if settings.floating and settings.late_first_stop_cost:
         # load 1 leaves at start + first loading and the start never precedes time 0 (the
@@ -172,7 +183,7 @@ def build_model(inputs: SolverInputs, disabled_trucks: set[int] | None = None) -
         # reached late.  Charge that lateness on the DC -> first-stop arc of load 1.
         slack_to_appt = settings.model_offset_s + settings.earliest_delivery_rel_s
         slack_to_appt -= settings.first_load_seconds
-        first_cost = [row[:] for row in travel]
+        first_cost = [row[:] for row in cost]
         for d in range(n_dep):
             for j in range(n_dep, n_nodes):
                 late = max(0, travel[d][j] - slack_to_appt)

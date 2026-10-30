@@ -311,3 +311,25 @@ def test_stop_transit_is_shown_apart_from_driving() -> None:
     assert visits[0].transit_min_from_prev == 0
     assert visits[1].transit_min_from_prev == 20
     assert visits[1].depart_s - visits[1].arrive_s == 5 * 60  # service = 50 x 0.1
+
+
+def test_goal_cluster_keeps_each_truck_in_one_area() -> None:
+    # two areas 50 mi apart (north-east and south-west of the DC), three stops each
+    ships = [_ship(25, 40 + 4 * i, address=f"{i} North Rd", volume=60) for i in range(3)]
+    ships += [_ship(25, 220 + 4 * i, address=f"{i} South Rd", volume=60) for i in range(3)]
+
+    def plan_for(goal: str):  # type: ignore[no-untyped-def]
+        s = _ca(goal=goal, max_loads_per_truck=1)
+        stops = _stops(ships, s)
+        res = _run(stops, s, trucks=2)
+        by_id = {x.stop_id: x for x in stops}
+        return res, by_id
+
+    res_a, _ = plan_for("both")
+    res_d, by_id = plan_for("cluster")
+    assert len(res_d.plan.served_stop_ids) >= len(res_a.plan.served_stop_ids)  # never fewer
+    assert not res_d.plan.hard_violations
+    for _t, load in _loads(res_d):
+        areas = {"North" if "North" in by_id[v.stop_id].address else "South" for v in load.stops}
+        assert len(areas) == 1  # one area per load
+    assert _ca(goal="cluster").cluster_weight == 4.0

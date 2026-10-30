@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from routeopt.domain import hub_today, time_to_seconds
 
 PresetName = Literal["A", "B", "Custom"]
-GoalName = Literal["both", "stops", "volume", "custom"]
+GoalName = Literal["both", "stops", "volume", "cluster", "custom"]
 LunchMode = Literal["smart", "simple"]
 TravelProviderChoice = Literal["auto", "osrm", "haversine", "tomtom"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
@@ -186,6 +186,7 @@ class RunSettings(BaseModel):
     # which stops to keep when there are more candidates than trucks (see GOAL_WEIGHTS);
     # "custom" uses volume_value_cuft
     goal: GoalName = "both"
+    cluster_weight: float = 4.0  # goal "cluster": stop -> stop drives cost 1 + this x
     traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
     traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
     truck_length_ft: float = 26.0  # TomTom truck routing
@@ -494,6 +495,7 @@ GOAL_WEIGHTS: dict[str, tuple[float, float | None]] = {
     "both": (1.0, 100.0),  # 100 cu ft = one stop
     "stops": (1.0, 10_000.0),  # stops first; volume only breaks ties
     "volume": (0.05, 100.0),  # volume first; a stop alone is worth 5 cu ft
+    "cluster": (1.0, 100.0),  # values stops like "both"; the routes stay compact
 }
 
 
@@ -502,6 +504,8 @@ def goal_description(goal: GoalName) -> str:
         "both": "Stops + volume: each stop counts as 1 + its cu ft / 100 (300 cu ft = 4 stops).",
         "stops": "Max stops: as many stops as possible; volume only decides between equal counts.",
         "volume": "Max volume: as many cu ft as possible; small stops only when they fit on the way.",
+        "cluster": "Nearby stops together: stops + volume like A, but driving between stops costs "
+        "5x, so each truck takes a tight group of stops in one area.",
         "custom": "Custom: each stop counts as 1 + its cu ft / Volume value (Advanced settings).",
     }[goal]
 
@@ -608,7 +612,12 @@ SETTING_TOOLTIPS: dict[str, str] = {
     ),
     "goal": (
         "Which stops to keep when there are more candidates than trucks: A = stops and "
-        "volume together, B = most stops, C = most volume, Custom = Volume value."
+        "volume together, B = most stops, C = most volume, D = A with each truck's stops "
+        "kept close together, Custom = Volume value."
+    ),
+    "cluster_weight": (
+        "Goal D (Nearby stops together): driving between two stops costs 1 + this many "
+        "times its minutes. Higher = tighter groups per truck. Never drops a stop to do it."
     ),
     "use_priority": (
         "On: priority 1 (existing LFLT loads in the upload's priority column) is always "

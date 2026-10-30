@@ -393,8 +393,7 @@ def finalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     current = [
         r
         for r in rows
-        if (r.get("stage") == "reoptimized") == (r["run_id"] in reopt_runs)
-        and r["stop_seq"] < 900
+        if (r.get("stage") == "reoptimized") == (r["run_id"] in reopt_runs) and r["stop_seq"] < 900
     ]
     statuses: dict[tuple[Any, ...], list[str]] = {}
     for r in current:

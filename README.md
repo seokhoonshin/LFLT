@@ -224,7 +224,7 @@ Rows sharing an address (+ zip) become one **stop**, always served together by o
 | Weight / pieces cap | off | optional hard caps; always reported |
 | Stop buffer | 20 min (CA: 0) | once per stop |
 | Stops in transit | CA: 20 min | added to every stop-to-stop drive |
-| Goal (CA) | A — Stops + volume | which stops to keep when candidates exceed the trucks: A stops + volume (1 + cu ft / 100 per stop), B max stops, C max volume, Custom = Volume value |
+| Goal (CA) | A — Stops + volume | which stops to keep when candidates exceed the trucks: A stops + volume (1 + cu ft / 100 per stop), B max stops, C max volume, D nearby stops together (A, with stop-to-stop driving costing 1 + Nearby-stops weight (4) x so each truck keeps to one area), Custom = Volume value |
 | Volume value | CA: 100 cu ft | Goal = Custom: a stop counts as 1 + its cu ft / this value; 0 = count stops only |
 | Priority 1 first | CA: off | on = the upload's priority 1 (existing LFLT loads) is always planned first; off = all candidates alike |
 | Reload | 60 min | between loads of the same truck (unload returns, load the next set) |

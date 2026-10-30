@@ -168,7 +168,7 @@ def dl(label: str, key: str, value: Any = None) -> str:
 
 
 top1, top2, top3 = st.columns([1.2, 1, 1])
-GOALS = ["both", "stops", "volume", "custom"]
+GOALS = ["both", "stops", "volume", "cluster", "custom"]
 if profile == "ca_lflt":
     # CA: the trucks are fixed, so the choice is which stops to keep; trucks stay packed (A)
     preset = defaults.preset
@@ -180,6 +180,7 @@ if profile == "ca_lflt":
             "both": "A — Stops + volume",
             "stops": "B — Max stops",
             "volume": "C — Max volume",
+            "cluster": "D — Nearby stops together",
             "custom": "Custom",
         }[g],
         help=TIP["goal"],
@@ -522,6 +523,15 @@ with st.expander("Advanced settings", expanded=False):
         disabled=goal != "custom",
         help=TIP["volume_value_cuft"],
     )
+    cluster_weight = g4.number_input(
+        dl("Nearby-stops weight (goal D)", "cluster_weight"),
+        0.0,
+        20.0,
+        float(defaults.cluster_weight),
+        0.5,
+        disabled=goal != "cluster",
+        help=TIP["cluster_weight"],
+    )
     st.markdown("**TomTom** (used when Travel times = TomTom)")
     k1, k2, k3, k4 = st.columns(4)
     use_tomtom = travel_provider == "tomtom"
@@ -637,6 +647,7 @@ try:
         volume_value_cuft=float(volume_value) or None,
         use_priority=bool(use_priority),
         goal=goal,  # type: ignore[arg-type]
+        cluster_weight=float(cluster_weight),
         traffic_factor=float(traffic_factor),
         traffic_depart_time=traffic_depart,
         truck_length_ft=float(truck_length),
