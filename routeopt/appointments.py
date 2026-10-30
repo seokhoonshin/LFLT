@@ -213,7 +213,9 @@ EXPORT_COLUMNS = [
 ]
 
 
-def load_sheet_rows(stops: list[dict[str, Any]], exclude_declined: bool = True) -> list[dict]:
+def load_sheet_rows(
+    stops: list[dict[str, Any]], exclude_declined: bool = True, pickup: str = ""
+) -> list[dict]:
     """One load's export rows from its ``group_by_stop`` rows: the warehouse as stop 1,
     then the customer stops renumbered 2..n (declined stops left out by default)."""
     kept = [s for s in stops if not (exclude_declined and s["status"] == "Declined")]
@@ -227,7 +229,7 @@ def load_sheet_rows(stops: list[dict[str, Any]], exclude_declined: bool = True) 
             "load ID": load_id,
             "Stop": 1,
             "date": first["delivery_date"],
-            "APPT time": "",
+            "APPT time": pickup,  # the warehouse pickup
             "APPT #": "",
             "Customer": warehouse_label(first["dc"]),
             "Address": warehouse_address(first["dc"]),
@@ -260,6 +262,7 @@ def export_stops_by_load(
     rows: list[dict[str, Any]],
     exclude_declined: bool = True,
     only: tuple[str, str, int] | None = None,
+    pickups: dict[tuple[str, str, int], str] | None = None,
 ) -> bytes:
     """Excel of every load in ``rows`` (or only (run_id, truck, load_seq)): per load the
     warehouse as stop 1, then its stops; a blank row between loads."""
@@ -282,7 +285,8 @@ def export_stops_by_load(
     for n, key in enumerate(keys):
         if n:
             ws.append([])
-        for i, r in enumerate(load_sheet_rows(loads[key], exclude_declined)):
+        pickup = (pickups or {}).get(key, "")
+        for i, r in enumerate(load_sheet_rows(loads[key], exclude_declined, pickup)):
             ws.append([r[c] for c in EXPORT_COLUMNS])
             ws.cell(ws.max_row, EXPORT_COLUMNS.index("date") + 1).number_format = "m/d/yyyy"
             if i == 0:  # the warehouse row
@@ -417,3 +421,26 @@ def period_key(day: dt.date, period: str) -> tuple[dt.date, str]:
     if period == "Year":
         return day.replace(month=1, day=1), f"{day:%Y}"
     return day, f"{day:%m/%d}"
+
+
+def clock_seconds(text: str | None) -> int | None:
+    """'13:05' or '1:05 PM' -> seconds since midnight (None when blank / unreadable)."""
+    if not text:
+        return None
+    t = str(text).strip().upper()
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p"):
+        try:
+            v = dt.datetime.strptime(t, fmt)
+        except ValueError:
+            continue
+        return v.hour * 3600 + v.minute * 60
+    return None
+
+
+def pickup_seconds(first_stop_s: int | None, drive_s: int | None, earliest_s: int) -> int | None:
+    """When the loaded truck must leave the warehouse to reach the first stop at
+    ``first_stop_s``: worked back by the drive, never before ``earliest_s`` (DC opening +
+    loading, e.g. 6:00 + 1:30 = 7:30)."""
+    if first_stop_s is None or drive_s is None:
+        return None
+    return max(earliest_s, first_stop_s - drive_s)

@@ -175,7 +175,7 @@ for truck in plan.trucks:
             st.markdown(
                 f"**Load {load.seq}** from {SITE_BY_CODE[load.site].name}"
                 + (" (pallet trip)" if load.pallet and cap != settings.truck_volume_cuft else "")
-                + f" · depart {clock(load.depart_s)} · return {clock(load.return_s)} · "
+                + f" · warehouse pickup {clock(load.depart_s)} · return {clock(load.return_s)} · "
                 f"load-out {load.load_out_volume:.0f} cu ft ({100 * load.load_out_volume / cap:.0f}%) · "
                 f"{load.one_way_miles:.0f} mi one way · "
                 f"max on road {load.max_volume_on_road:.0f} cu ft · {load.drive_minutes:.0f} min / {load.distance_miles:.1f} mi driving"

@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 
 from routeopt.config import AppConfig, RunSettings
 from routeopt.db.repo import Repository, RunRecord
-from routeopt.domain import Plan, Stop, clock, hub_today
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock, hub_today
 from routeopt.logging_utils import configure_logging
 from routeopt.travel import FALLBACK_WARNING
 from routeopt.travel.osrm import OSRMProvider
@@ -141,12 +141,35 @@ def load_table(
 ) -> pd.DataFrame:
     truck = plan.truck(truck_number)
     load = next(load for load in truck.loads if load.seq == load_seq)
-    rows: list[dict[str, Any]] = []
+    site = SITE_BY_CODE.get(load.site)
+    # first row: the warehouse pickup = when the loaded truck leaves the DC (the driver's
+    # start + loading, worked back from the first appointment; never before DC opening +
+    # loading)
+    rows: list[dict[str, Any]] = [
+        {
+            "#": "DC",
+            "ETA": "",
+            "Window": "",
+            "Customer": f"{load.site} warehouse pickup",
+            "Address": site.address if site else "",
+            "Type": "",
+            "Drive min": None,
+            "Stop transit min": None,
+            "Miles from prev": None,
+            "Service min": None,
+            "Depart": clock(load.depart_s),
+            "Stop volume": round(load.load_out_volume, 1),
+            "Volume after": round(load.load_out_volume, 1),
+            "Lunch before": "",
+            "Appointment contact": "",
+            "Stop": "",
+        }
+    ]
     for v in load.stops:
         s = stops_by_id.get(v.stop_id)
         rows.append(
             {
-                "#": v.seq,
+                "#": str(v.seq),
                 "ETA": clock(v.arrive_s),
                 "Window": f"{clock(v.eta_window_start_s)} – {clock(v.eta_window_end_s)}",
                 "Customer": s.customer_label if s else v.stop_id,

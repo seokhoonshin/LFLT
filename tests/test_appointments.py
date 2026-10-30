@@ -384,3 +384,29 @@ def test_load_map_html_draws_the_warehouse_and_the_stops() -> None:
 
     html = load_map_html("LGC8", [(34.0, -117.5, "2", "2 · A"), (34.1, -117.6, "3", "3 · B")])
     assert "Sierra Ave" in html and "2 · A" in html and "3 · B" in html
+
+
+def test_pickup_is_worked_back_from_the_first_appointment() -> None:
+    from routeopt.appointments import clock_seconds, pickup_seconds, time_text
+
+    assert clock_seconds("10:00") == 36000 and clock_seconds("8:32 AM") == 8 * 3600 + 32 * 60
+    assert clock_seconds("1:05 PM") == 13 * 3600 + 300 and clock_seconds("") is None
+    earliest = 7 * 3600 + 1800  # 6:00 opening + 90 min loading
+    # first appointment 10:00, 45 min from the DC -> leave 9:15
+    assert pickup_seconds(36000, 45 * 60, earliest) == 9 * 3600 + 15 * 60
+    # an 8:00 first stop 60 min away cannot be met before the DC opens -> 7:30
+    assert pickup_seconds(8 * 3600, 3600, earliest) == earliest
+    assert pickup_seconds(None, 600, earliest) is None
+    assert time_text("07:30") == "7:30 AM" and time_text("13:05") == "1:05 PM"
+
+
+def test_export_puts_the_pickup_on_the_warehouse_row() -> None:
+    import io
+
+    from openpyxl import load_workbook
+    from routeopt.appointments import export_stops_by_load
+
+    data = export_stops_by_load(_rows_for_export(), pickups={("r", "T01", 1): "7:30 AM"})
+    ws = load_workbook(io.BytesIO(data)).active
+    header = [c.value for c in ws[1]]
+    assert ws.cell(2, header.index("APPT time") + 1).value == "7:30 AM"

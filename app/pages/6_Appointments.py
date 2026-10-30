@@ -22,6 +22,7 @@ from routeopt.appointments import (
     OUTCOMES,
     STATUSES,
     appointment_rows,
+    clock_seconds,
     export_stops_by_load,
     finalized_rows,
     group_by_stop,
@@ -30,12 +31,16 @@ from routeopt.appointments import (
     origin_label,
     outcome_summary,
     period_key,
+    pickup_seconds,
     stop_outcomes,
+    time_text,
     warehouse_address,
     warehouse_label,
 )
+from routeopt.domain import N_DEPOTS, SITE_NODE
 from routeopt.export.mapping import load_map_html
 from routeopt.reoptimize import declined_stop_ids, replan
+from routeopt.travel import planning_matrix
 from routeopt.travel.osrm import OSRMProvider
 
 from _common import (
@@ -180,7 +185,50 @@ if by_stop:
     EDITABLE = ("Stop", *EDITABLE)  # the order can be changed too (type new numbers)
 
 
-def table_rows(load_items: list[dict]) -> list[dict]:
+def run_travel(run_id: str):  # type: ignore[no-untyped-def]
+    """The run's planning travel times (traffic factor applied), its node index per stop
+    and the earliest load-1 pickup (DC opening + loading, e.g. 7:30)."""
+    cache: dict = st.session_state.setdefault("run_travel", {})
+    if run_id not in cache:
+        rec = load_record(run_id)
+        matrix = planning_matrix(rec.matrix, rec.settings)
+        node = {s.stop_id: i + N_DEPOTS for i, s in enumerate(rec.stops)}
+        earliest = rec.settings.earliest_shift_start_s + rec.settings.first_load_seconds
+        cache[run_id] = (matrix, node, earliest)
+    return cache[run_id]
+
+
+def pickups_for(stage_rows: list[dict]) -> dict[tuple[str, str, int], str]:
+    """Warehouse pickup per load ("HH:MM"): the first live stop's APPT time (else its plan
+    ETA) minus the drive from the DC; load 1 never before DC opening + loading."""
+    out: dict[tuple[str, str, int], str] = {}
+    firsts: dict[tuple[str, str, int], dict] = {}
+    for s in group_by_stop(stage_rows):
+        if s["stop_seq"] >= 900 or s["status"] == "Declined":
+            continue
+        key = (s["run_id"], s["truck"], s["load_seq"])
+        if key not in firsts or s["stop_seq"] < firsts[key]["stop_seq"]:
+            firsts[key] = s
+    for key, s in firsts.items():
+        try:
+            matrix, node, earliest = run_travel(key[0])
+        except LookupError:
+            continue
+        drive = None
+        if s["stop_id"] in node and s["dc"] in SITE_NODE:
+            drive = matrix.duration(SITE_NODE[s["dc"]], node[s["stop_id"]])
+        first = clock_seconds(s.get("appt_time")) or clock_seconds(s.get("eta"))
+        pick = pickup_seconds(first, drive, earliest if key[2] == 1 else 0)
+        if pick is not None:
+            out[key] = f"{pick // 3600:02d}:{pick % 3600 // 60:02d}"
+    return out
+
+
+def export_pickups(stage_rows: list[dict]) -> dict[tuple[str, str, int], str]:
+    return {k: time_text(v) for k, v in pickups_for(stage_rows).items()}
+
+
+def table_rows(load_items: list[dict], pickup: str | None = None) -> list[dict]:
     """The warehouse (stop 1) and then the stops, with the on-screen labels."""
     first = load_items[0]
     load_id = next((r["load_id"] for r in load_items if r.get("load_id")), None)
@@ -190,7 +238,7 @@ def table_rows(load_items: list[dict]) -> list[dict]:
             "load ID": load_id,
             "Stop": 1,
             "date": first["delivery_date"],
-            "APPT time": None,
+            "APPT time": _to_time(pickup),  # warehouse pickup, worked back
             "APPT #": None,
             "Customer": warehouse_label(first["dc"]),
             "Address": warehouse_address(first["dc"]),
@@ -379,7 +427,9 @@ def load_tools(
         c1, c2, _ = st.columns([2, 1, 4])
         c1.download_button(
             f"Download {truck} · Load {load_seq}",
-            export_stops_by_load(stage_rows, only=(run_id, truck, load_seq)),
+            export_stops_by_load(
+                stage_rows, only=(run_id, truck, load_seq), pickups=export_pickups(stage_rows)
+            ),
             file_name=f"appointments_{day.isoformat()}_{stage}_{truck.split()[0]}_L{load_seq}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl-{stage}-{run_id}-{truck}-{load_seq}",
@@ -390,6 +440,7 @@ def load_tools(
 
 def render(stage_rows: list[dict], stage: str) -> None:
     """Metrics, downloads and the editable tables of one set (original / re-optimized)."""
+    pickups = pickups_for(stage_rows)
     counted = group_by_stop(stage_rows) if by_stop else stage_rows
     m = st.columns(len(STATUSES) + 1)
     m[0].metric("Stops" if by_stop else "Shipments", len(counted))
@@ -397,7 +448,7 @@ def render(stage_rows: list[dict], stage: str) -> None:
         col.metric(status, sum(r["status"] == status for r in counted))
     st.download_button(
         "Download all loads of this day (Excel)",
-        export_stops_by_load(stage_rows),
+        export_stops_by_load(stage_rows, pickups=export_pickups(stage_rows)),
         file_name=f"appointments_{day.isoformat()}_{stage}_all_loads.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Per load: the warehouse as stop 1 (load total volume), then its stops. "
@@ -429,7 +480,8 @@ def render(stage_rows: list[dict], stage: str) -> None:
                 load_items = list(load_items)
                 load_seqs.append(load_seq)
                 st.markdown(f"**Load {load_seq}** — from {origin_label(load_items[0]['dc'])}")
-                df = pd.DataFrame(table_rows(load_items), columns=LABELS)
+                pickup = pickups.get((run_id, truck, load_seq))
+                df = pd.DataFrame(table_rows(load_items, pickup), columns=LABELS)
                 ids = [[]] + [r["ids"] if by_stop else [r["id"]] for r in load_items]
                 out = st.data_editor(
                     df,
@@ -511,9 +563,10 @@ def render(stage_rows: list[dict], stage: str) -> None:
 def render_final(final_rows: list[dict]) -> None:
     """Read-only finalized loads: the export columns (warehouse first), shipments, status;
     per load a download and a Map toggle."""
+    final_pickups = export_pickups(final_rows)
     st.download_button(
         "Download all finalized loads shown (Excel)",
-        export_stops_by_load(final_rows),
+        export_stops_by_load(final_rows, pickups=export_pickups(final_rows)),
         file_name=f"finalized_{day.isoformat()}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dl-all-finalized",
@@ -534,7 +587,9 @@ def render_final(final_rows: list[dict]) -> None:
         for load_seq, load_items in groupby(stops_here, key=lambda r: r["load_seq"]):
             load_items = list(load_items)
             load_seqs.append(load_seq)
-            sheet = load_sheet_rows(load_items)
+            sheet = load_sheet_rows(
+                load_items, pickup=final_pickups.get((run_id, truck, load_seq), "")
+            )
             extra = [{"Shipment IDs": None, "Status": None}] + [
                 {"Shipment IDs": x["shipment_ids"], "Status": x["status"]} for x in load_items
             ]

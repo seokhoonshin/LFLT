@@ -64,3 +64,21 @@ def test_load_summary_rows_and_exports(tmp_path) -> None:  # type: ignore[no-unt
     assert isinstance(ws.cell(row=2, column=COLUMNS.index("PICK_APT") + 1).value, dt.datetime)
     pdf = export_load_summary_pdf(plan, stops, s, tmp_path)
     assert pdf.read_bytes()[:4] == b"%PDF"
+
+
+def test_results_load_table_starts_with_the_warehouse_pickup(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+    from routeopt.domain import clock
+
+    from _common import load_table
+
+    plan, stops, _s = _plan(tmp_path)
+    truck = next(t for t in plan.trucks if any(ld.stops for ld in t.loads))
+    load = next(ld for ld in truck.loads if ld.stops)
+    df = load_table(plan, truck.number, load.seq, {s.stop_id: s for s in stops})
+    first = df.iloc[0]
+    assert first["#"] == "DC" and first["Depart"] == clock(load.depart_s)
+    assert "warehouse pickup" in first["Customer"] and len(df) == len(load.stops) + 1
