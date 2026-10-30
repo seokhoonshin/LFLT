@@ -23,19 +23,32 @@ from pathlib import Path
 from typing import Any
 
 from routeopt.config import AppConfig, RunSettings
-from routeopt.domain import Plan, Stop, TruckConfig, UnassignedStop
+from routeopt.domain import N_DEPOTS, Plan, Stop, TruckConfig, UnassignedStop
 from routeopt.ingest.consolidate import ConsolidationResult, consolidate
 from routeopt.ingest.excel_loader import load_rows
 from routeopt.ingest.validator import Geocoder, ValidationResult, validate_rows
 from routeopt.logging_utils import get_logger
 from routeopt.solver.extract import extract_plan, new_run_id
 from routeopt.solver.model_builder import SolverInputs
+from routeopt.solver.obs_addon import (
+    REASON_OBS_EXCLUDED,
+    add_obs_stops,
+    is_obs_stop,
+    obs_unassigned,
+)
 from routeopt.solver.plan_validator import validate_plan
 from routeopt.solver.solve import solve
 from routeopt.solver.unassigned_reasons import attribute_reasons
-from routeopt.travel import FALLBACK_WARNING, ProviderChoice, node_coords, select_provider
+from routeopt.travel import (
+    FALLBACK_WARNING,
+    ProviderChoice,
+    node_coords,
+    planning_matrix,
+    select_provider,
+)
 from routeopt.travel.base import Matrix
 from routeopt.travel.cache import TravelCache
+from routeopt.travel.tomtom import is_road_source
 
 log = logging.getLogger(__name__)
 
@@ -62,12 +75,12 @@ def scope_stops(
 ) -> tuple[list[Stop], Matrix, list[UnassignedStop]]:
     """Keep D stops plus the enabled pull-forward days; restrict the matrix to match."""
     enabled = set(settings.pull_forward_days)
-    keep: list[int] = [0]
+    keep: list[int] = list(range(N_DEPOTS))
     kept: list[Stop] = []
     excluded: list[UnassignedStop] = []
     for i, s in enumerate(stops):
         if s.day_tag.offset == 0 or s.day_tag.offset in enabled:
-            keep.append(i + 1)
+            keep.append(i + N_DEPOTS)
             kept.append(s)
         else:
             excluded.append(
@@ -101,6 +114,7 @@ class OptimizeResult:
     anomalies: list[str] = field(default_factory=list)
     all_stops: list[Stop] = field(default_factory=list)
     full_matrix: Matrix | None = None
+    raw_matrix: Matrix | None = None  # the provider's matrix, as cached / saved with the run
 
     @property
     def in_scope_ids(self) -> set[str]:
@@ -113,22 +127,45 @@ def optimize(
     settings: RunSettings,
     trucks: list[TruckConfig],
     run_id: str | None = None,
+    pinned: dict[str, str] | None = None,
 ) -> OptimizeResult:
     """Solve, extract, validate and attribute reasons.  Never hangs: the solver is
     time-limited and a partial plan (or a clear failure message) always comes back."""
     run_id = run_id or new_run_id()
     rlog = get_logger(__name__, run_id)
+    raw_matrix = matrix
+    matrix = planning_matrix(matrix, settings)
     all_stops, full_matrix = stops, matrix
     stops, matrix, out_of_scope = scope_stops(stops, matrix, settings)
-    inputs = SolverInputs(stops=stops, matrix=matrix, settings=settings, trucks=trucks)
+    # OBS-only stops are left out of the solve unless they compete normally
+    obs_stops = [s for s in stops if is_obs_stop(s)] if settings.obs_mode != "normal" else []
+    obs_ids = {s.stop_id for s in obs_stops}
+    keep = list(range(N_DEPOTS)) + [
+        i + N_DEPOTS for i, s in enumerate(stops) if s.stop_id not in obs_ids
+    ]
+    solve_stops = [s for s in stops if s.stop_id not in obs_ids]
+    solve_matrix = matrix.submatrix(keep) if obs_ids else matrix
+    inputs = SolverInputs(
+        stops=solve_stops,
+        matrix=solve_matrix,
+        settings=settings,
+        trucks=trucks,
+        pinned=dict(pinned or {}),
+    )
     t0 = time.perf_counter()
-    outcome = solve(inputs)
+    # the greedy start ignores pins, so a pinned re-plan starts from the solver's own
+    outcome = solve(inputs, use_initial=not pinned)
     plan = extract_plan(outcome, inputs, run_id=run_id, matrix_source=matrix.source)
     plan.out_of_scope = out_of_scope
-    if matrix.source != "osrm":
+    if not is_road_source(matrix.source):
         plan.warnings.insert(0, FALLBACK_WARNING)
+    plan.unassigned, anomalies = attribute_reasons(plan, solve_stops, settings, solve_matrix)
+    if obs_stops and settings.obs_mode == "exclude":
+        plan.out_of_scope += [obs_unassigned(s, REASON_OBS_EXCLUDED) for s in obs_stops]
+        stops, matrix = solve_stops, solve_matrix
+    elif obs_stops:
+        plan = add_obs_stops(plan, stops, obs_stops, settings, matrix)
     plan.violations = validate_plan(plan, stops, settings, matrix)
-    plan.unassigned, anomalies = attribute_reasons(plan, stops, settings, matrix)
     for a in anomalies:
         plan.warnings.append(f"Priority anomaly: {a}")
     rlog.info(
@@ -149,6 +186,7 @@ def optimize(
         anomalies=anomalies,
         all_stops=all_stops,
         full_matrix=full_matrix,
+        raw_matrix=raw_matrix,
     )
 
 
@@ -321,7 +359,10 @@ class OptimizeJob:
                 try:
                     status, payload = self._conn.recv()
                 except (EOFError, OSError):
-                    status, payload = "error", "The optimizer process stopped before returning a plan."
+                    status, payload = (
+                        "error",
+                        "The optimizer process stopped before returning a plan.",
+                    )
                 if status == "ok":
                     self.result = payload
                 else:

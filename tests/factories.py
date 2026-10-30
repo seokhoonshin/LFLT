@@ -20,7 +20,12 @@ RETURN_SITE = (round(HUB_LAT - 0.0076, 4), round(HUB_LON + 0.0600, 4))  # return
 
 
 def make_settings(**overrides: object) -> RunSettings:
-    base: dict[str, object] = {"plan_date": PLAN_DATE, "solve_time_seconds": 10}
+    # the legacy brief: single hub, 08:00 start, 600 cu ft, OBS stops are tier 1
+    base: dict[str, object] = {
+        "profile": "legacy",
+        "plan_date": PLAN_DATE,
+        "solve_time_seconds": 10,
+    }
     base.update(overrides)
     return RunSettings(**base)  # type: ignore[arg-type]
 

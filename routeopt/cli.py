@@ -29,14 +29,20 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("workbook", type=Path)
     run.add_argument("--preset", choices=["A", "B", "Custom"], default="A")
     run.add_argument(
+        "--profile",
+        choices=["ca_lflt", "legacy"],
+        default="ca_lflt",
+        help="rule set: CA LFLT (default) or the legacy single-hub brief",
+    )
+    run.add_argument(
         "--plan-date", type=_parse_date, default=None, help="delivery day D (default: today + 2)"
     )
     run.add_argument("--solve-time", type=int, default=60, help="seconds, 1-60")
     run.add_argument("--pull-forward", default="", help="comma list of pull-forward days, e.g. 1,2")
     run.add_argument("--trucks", type=int, default=None, help="use only the first N trucks")
     run.add_argument("--lunch-mode", choices=["smart", "simple"], default="smart")
-    run.add_argument("--provider", choices=["auto", "osrm", "haversine"], default="auto")
-    run.add_argument("--max-loads", type=int, default=3)
+    run.add_argument("--provider", choices=["auto", "osrm", "haversine", "tomtom"], default="auto")
+    run.add_argument("--max-loads", type=int, default=None, help="default: the profile's")
     run.add_argument(
         "--fixed-cost", type=int, default=None, help="Custom preset: fixed cost per truck"
     )
@@ -65,16 +71,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def settings_from_args(args: argparse.Namespace) -> RunSettings:
     pull = [int(x) for x in args.pull_forward.split(",") if x.strip()]
+    extra: dict[str, object] = {}
+    if args.max_loads is not None:
+        extra["max_loads_per_truck"] = args.max_loads
     return RunSettings(
+        profile=args.profile,
         plan_date=args.plan_date or hub_today() + dt.timedelta(days=2),
         preset=args.preset,
         solve_time_seconds=args.solve_time,
         pull_forward_days=pull,
         lunch_mode=args.lunch_mode,
         travel_provider=args.provider,
-        max_loads_per_truck=args.max_loads,
         truck_fixed_cost=args.fixed_cost,
         span_cost_coefficient=args.span_cost,
+        **extra,  # type: ignore[arg-type]
     )
 
 
@@ -143,8 +153,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     app = AppConfig()
     settings = settings_from_args(args)
     trucks = default_trucks()
-    if args.trucks:
+    if args.trucks:  # --trucks N wins over the profile's truck selection
         trucks = trucks[: args.trucks]
+        settings = settings.model_copy(update={"trucks_selected": []})
     from routeopt.ingest.census_geocoder import CensusGeocoder
 
     try:
@@ -176,7 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             plan,
             result.all_stops,
             settings,
-            result.full_matrix or result.matrix,
+            result.raw_matrix or result.full_matrix or result.matrix,
             ing.validation.shipments,
             trucks,
             source_name=str(args.workbook),

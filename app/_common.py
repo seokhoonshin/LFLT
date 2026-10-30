@@ -16,10 +16,11 @@ if str(ROOT) not in sys.path:
 
 from routeopt.config import AppConfig, RunSettings
 from routeopt.db.repo import Repository, RunRecord
-from routeopt.domain import Plan, Stop, clock, hub_today
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock, hub_today
 from routeopt.logging_utils import configure_logging
 from routeopt.travel import FALLBACK_WARNING
 from routeopt.travel.osrm import OSRMProvider
+from routeopt.travel.tomtom import is_road_source
 
 PAGE_ICON = "🚚"
 
@@ -64,11 +65,13 @@ def osrm_status_line() -> None:
             "estimates until it is back.",
             icon="⚠️",
         )
+    if cfg.tomtom_api_key:
+        st.sidebar.info("TomTom key configured (Travel times = TomTom).", icon="🚚")
 
 
 def fallback_banner(plan: Plan | None = None) -> None:
     """Persistent banner whenever estimated travel times are in play."""
-    if plan is not None and plan.matrix_source != "osrm":
+    if plan is not None and not is_road_source(plan.matrix_source):
         st.warning(f"{FALLBACK_WARNING}. ETAs on this plan are straight-line estimates.", icon="⚠️")
     elif plan is None and st.session_state.get("travel_fallback"):
         st.warning(f"{FALLBACK_WARNING}. The last run used straight-line estimates.", icon="⚠️")
@@ -138,12 +141,35 @@ def load_table(
 ) -> pd.DataFrame:
     truck = plan.truck(truck_number)
     load = next(load for load in truck.loads if load.seq == load_seq)
-    rows: list[dict[str, Any]] = []
+    site = SITE_BY_CODE.get(load.site)
+    # first row: the warehouse pickup = when the loaded truck leaves the DC (the driver's
+    # start + loading, worked back from the first appointment; never before DC opening +
+    # loading)
+    rows: list[dict[str, Any]] = [
+        {
+            "#": "DC",
+            "ETA": "",
+            "Window": "",
+            "Customer": f"{load.site} warehouse pickup",
+            "Address": site.address if site else "",
+            "Type": "",
+            "Drive min": None,
+            "Stop transit min": None,
+            "Miles from prev": None,
+            "Service min": None,
+            "Depart": clock(load.depart_s),
+            "Stop volume": round(load.load_out_volume, 1),
+            "Volume after": round(load.load_out_volume, 1),
+            "Lunch before": "",
+            "Appointment contact": "",
+            "Stop": "",
+        }
+    ]
     for v in load.stops:
         s = stops_by_id.get(v.stop_id)
         rows.append(
             {
-                "#": v.seq,
+                "#": str(v.seq),
                 "ETA": clock(v.arrive_s),
                 "Window": f"{clock(v.eta_window_start_s)} – {clock(v.eta_window_end_s)}",
                 "Customer": s.customer_label if s else v.stop_id,
@@ -151,10 +177,15 @@ def load_table(
                 "Type": "/".join(sorted({sh.shipment_type.value for sh in s.shipments}))
                 if s
                 else "",
+                "Drive min": v.travel_min_from_prev,
+                "Stop transit min": v.transit_min_from_prev,
+                "Miles from prev": v.dist_mi_from_prev,
                 "Service min": s.service_total_minutes if s else "",
                 "Depart": clock(v.depart_s),
+                "Stop volume": round(v.volume_on_arrival - v.volume_after, 1),
                 "Volume after": v.volume_after,
                 "Lunch before": "🍽️" if v.lunch_before else "",
+                "Appointment contact": s.contact if s else "",
                 "Stop": v.stop_id,
             }
         )

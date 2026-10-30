@@ -19,9 +19,77 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from routeopt.domain import hub_today, time_to_seconds
 
 PresetName = Literal["A", "B", "Custom"]
+GoalName = Literal["both", "stops", "volume", "cluster", "custom"]
 LunchMode = Literal["smart", "simple"]
-TravelProviderChoice = Literal["auto", "osrm", "haversine"]
+TravelProviderChoice = Literal["auto", "osrm", "haversine", "tomtom"]
 FirstSolution = Literal["PARALLEL_CHEAPEST_INSERTION", "PATH_CHEAPEST_ARC"]
+ObsMode = Literal["last", "exclude", "normal"]
+GeocodeMode = Literal["address", "fill"]
+ProfileName = Literal["ca_lflt", "legacy"]
+
+# Values a profile supplies for every setting the caller does not give explicitly.
+# ``ca_lflt`` = CA LFLT RouteOpt Conditions (docs/CA_LFLT_RouteOpt_Conditions_EN.md);
+# ``legacy`` = the original single-hub brief.
+PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
+    "ca_lflt": {
+        "shift_start": dt.time(6, 0),
+        "first_load_minutes": 90,
+        "reload_minutes": 120,
+        "floating_start": True,
+        "earliest_shift_start": dt.time(6, 0),
+        "earliest_delivery": dt.time(8, 0),
+        "truck_volume_cuft": 800.0,
+        "volume_strict": True,
+        "pallet_volume_cuft": 400.0,
+        "unload_minutes_per_cuft": 0.1,
+        "max_loads_per_truck": 2,
+        "max_one_way_miles": 200.0,
+        "carrier_check_miles": 150.0,
+        "two_turn_max_miles": 300.0,
+        "turn_gap_minutes": 180,
+        "obs_mode": "last",
+        "require_shipment_suffix": False,
+        "coverage_radius_miles": 200.0,
+        "trucks_selected": ["T01", "T02"],
+        "geocode_mode": "address",
+        "same_location_travel_minutes": 15,
+        "stop_transit_minutes": 20,
+        "volume_value_cuft": 100.0,
+        "use_priority": False,
+        "goal": "both",
+        "stop_buffer_minutes": 0,
+        "traffic_factor": 1.3,
+    },
+    "legacy": {
+        "shift_start": dt.time(8, 0),
+        "first_load_minutes": 0,
+        "reload_minutes": 60,
+        "floating_start": False,
+        "earliest_shift_start": dt.time(8, 0),
+        "earliest_delivery": None,
+        "truck_volume_cuft": 600.0,
+        "volume_strict": False,
+        "pallet_volume_cuft": None,
+        "unload_minutes_per_cuft": None,
+        "max_loads_per_truck": 3,
+        "max_one_way_miles": None,
+        "carrier_check_miles": None,
+        "two_turn_max_miles": None,
+        "turn_gap_minutes": 0,
+        "obs_mode": "normal",
+        "require_shipment_suffix": False,
+        "coverage_radius_miles": 75.0,
+        "trucks_selected": [],
+        "geocode_mode": "fill",
+        "same_location_travel_minutes": 0,
+        "stop_transit_minutes": 0,
+        "volume_value_cuft": None,
+        "use_priority": True,
+        "goal": "custom",
+        "stop_buffer_minutes": 20,
+        "traffic_factor": 1.0,
+    },
+}
 
 DEFAULT_TIER_PENALTIES: dict[int, int] = {1: 100_000_000, 2: 10_000_000, 3: 1_000_000}
 DEFAULT_PULL_FORWARD_VALUE_MINUTES: dict[int, int] = {1: 240, 2: 120}
@@ -41,6 +109,11 @@ class AppConfig(BaseSettings):
     osrm_max_table_size: int = Field(default=2000, alias="OSRM_MAX_TABLE_SIZE")
     osrm_timeout_s: float = Field(default=20.0, alias="OSRM_TIMEOUT_S")
     map_component: str = Field(default="html", alias="ROUTEOPT_MAP_COMPONENT")  # html | st_folium
+    tomtom_api_key: str = Field(default="", alias="TOMTOM_API_KEY")
+    tomtom_base_url: str = Field(default="https://api.tomtom.com", alias="TOMTOM_BASE_URL")
+    tomtom_max_cells: int = Field(default=200, alias="TOMTOM_MAX_CELLS")  # per request
+    tomtom_max_nodes: int = Field(default=60, alias="TOMTOM_MAX_NODES")  # per run
+    tomtom_timeout_s: float = Field(default=60.0, alias="TOMTOM_TIMEOUT_S")
 
     @property
     def effective_db_url(self) -> str:
@@ -61,38 +134,88 @@ class AppConfig(BaseSettings):
 class RunSettings(BaseModel):
     """Per-run settings (brief 4.4).  Every field has a planner-facing tooltip in the UI."""
 
+    profile: ProfileName = "ca_lflt"
     plan_date: dt.date = Field(default_factory=lambda: hub_today() + dt.timedelta(days=2))
     pull_forward_days: list[int] = Field(default_factory=list)  # subset of [1, 2]
     trucks_selected: list[str] = Field(default_factory=list)  # empty = all active trucks
-    shift_start: dt.time = dt.time(8, 0)
+    shift_start: dt.time = dt.time(6, 0)
+    first_load_minutes: int = 90  # loading before the first departure (live loading)
+    # CA: the driver starts so that the first stop is reached at the first appointment time
+    # (start = appointment - first loading - drive to the first stop) and works on_duty_hours
+    # from there - but never before earliest_shift_start (the DC opens then; CA 06:00), so
+    # a far first stop is reached after the appointment.  Each second a load-1 first stop
+    # is reached after the appointment costs late_first_stop_cost: first stops reachable
+    # by the appointment are preferred.
+    floating_start: bool = True
+    earliest_shift_start: dt.time = dt.time(6, 0)
+    late_first_stop_cost: int = 2
+    earliest_delivery: dt.time | None = dt.time(8, 0)  # first appointment; early trucks wait
     on_duty_hours: float = 10.0
-    truck_volume_cuft: float = 600.0
+    truck_volume_cuft: float = 800.0
+    volume_strict: bool = True  # "less than" the cap (CA) instead of "at most"
+    pallet_volume_cuft: float | None = 400.0  # limit for a load with any pallet shipment
+    unload_minutes_per_cuft: float | None = 0.1  # None = use the upload's service_minutes
     truck_weight_lb_cap: float | None = None
     truck_pieces_cap: int | None = None
     stop_buffer_minutes: int = 20
-    reload_minutes: int = 60
+    reload_minutes: int = 120
     lunch_minutes: int = 30
     lunch_earliest: dt.time | None = dt.time(11, 0)
     lunch_latest: dt.time | None = dt.time(14, 0)
     lunch_mode: LunchMode = "smart"
-    max_loads_per_truck: int = 3
+    max_loads_per_truck: int = 2
+    max_one_way_miles: float | None = 200.0  # DC to the last stop of a load ("less than")
+    carrier_check_miles: float | None = 150.0  # warn: confirm with the carrier above this
+    two_turn_max_miles: float | None = 300.0  # all turns of a two-turn truck ("less than")
+    turn_gap_minutes: int = 180  # a turn departs >= last delivery of the previous turn + gap
+    require_shipment_suffix: bool = False  # on: ids must end in _LMD/_RTN/_INC
     preset: PresetName = "A"
     solve_time_seconds: int = 60
     eta_window_hours: float = 2.0
     travel_provider: TravelProviderChoice = "auto"
     haversine_road_factor: float = 1.3
     haversine_avg_speed_mph: float = 30.0
+    obs_mode: ObsMode = "last"
+    obs_radius_miles: float = 5.0
+    geocode_mode: GeocodeMode = "address"
+    same_location_travel_minutes: int = 15
+    stop_transit_minutes: int = 20  # added to every stop-to-stop drive
+    # stop value = one stop + its volume / this many cu ft (None = count stops only)
+    volume_value_cuft: float | None = 100.0
+    use_priority: bool = False  # False: the upload's priority column is ignored (all alike)
+    # which stops to keep when there are more candidates than trucks (see GOAL_WEIGHTS);
+    # "custom" uses volume_value_cuft
+    goal: GoalName = "both"
+    cluster_weight: float = 4.0  # goal "cluster": stop -> stop drives cost 1 + this x
+    traffic_factor: float = 1.3  # OSRM drive times are free-flow; x this for daytime traffic
+    traffic_depart_time: dt.time = dt.time(10, 0)  # TomTom: representative departure on D
+    truck_length_ft: float = 26.0  # TomTom truck routing
+    truck_height_ft: float = 13.5
+    truck_gross_weight_lb: float = 26000.0
     pull_forward_value_minutes: dict[int, int] = Field(
         default_factory=lambda: dict(DEFAULT_PULL_FORWARD_VALUE_MINUTES)
     )
     tier_penalties: dict[int, int] = Field(default_factory=lambda: dict(DEFAULT_TIER_PENALTIES))
     truck_fixed_cost: int | None = None  # Custom preset only
     span_cost_coefficient: int | None = None  # Custom preset only
-    coverage_radius_miles: float = 75.0
+    coverage_radius_miles: float = 200.0
     first_solution_strategy: FirstSolution = "PARALLEL_CHEAPEST_INSERTION"
     time_drift_tolerance_s: int = 60
 
     # ---- validation -----------------------------------------------------------------
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_profile(cls, data: object) -> object:
+        if isinstance(data, dict):
+            profile = data.get("profile")
+            if profile is None:
+                # a run saved before profiles existed (a full dump) keeps the legacy rules
+                profile = "legacy" if "time_drift_tolerance_s" in data else "ca_lflt"
+            if profile not in PROFILE_DEFAULTS:
+                raise ValueError(f"Unknown profile '{profile}' (use ca_lflt or legacy).")
+            data = {**PROFILE_DEFAULTS[str(profile)], **data, "profile": profile}
+        return data
+
     @field_validator("pull_forward_days")
     @classmethod
     def _check_pull_forward_days(cls, v: list[int]) -> list[int]:
@@ -113,6 +236,27 @@ class RunSettings(BaseModel):
     def _check_max_loads(cls, v: int) -> int:
         if not 1 <= v <= 5:
             raise ValueError("Loads per truck must be between 1 and 5.")
+        return v
+
+    @field_validator("obs_radius_miles")
+    @classmethod
+    def _check_obs_radius(cls, v: float) -> float:
+        if not 0 < v <= 50:
+            raise ValueError("OBS radius must be between 0 and 50 miles.")
+        return v
+
+    @field_validator("traffic_factor")
+    @classmethod
+    def _check_traffic_factor(cls, v: float) -> float:
+        if not 1.0 <= v <= 3.0:
+            raise ValueError("Traffic factor must be between 1.0 and 3.0.")
+        return v
+
+    @field_validator("same_location_travel_minutes")
+    @classmethod
+    def _check_same_location_minutes(cls, v: int) -> int:
+        if not 0 <= v <= 60:
+            raise ValueError("Same-location travel time must be between 0 and 60 minutes.")
         return v
 
     @field_validator("on_duty_hours")
@@ -164,7 +308,57 @@ class RunSettings(BaseModel):
     @property
     def volume_cap_tenths(self) -> int:
         """Truck volume cap in tenths of a cubic foot (solver units)."""
-        return round(self.truck_volume_cuft * 10)
+        return round(self.truck_volume_cuft * 10) - (1 if self.volume_strict else 0)
+
+    @property
+    def pallet_cap_tenths(self) -> int | None:
+        if self.pallet_volume_cuft is None:
+            return None
+        return round(self.pallet_volume_cuft * 10) - (1 if self.volume_strict else 0)
+
+    def load_cap_cuft(self, pallet: bool) -> float:
+        """Volume limit of one load (the pallet limit when any stop needs a pallet)."""
+        if pallet and self.pallet_volume_cuft is not None:
+            return self.pallet_volume_cuft
+        return self.truck_volume_cuft
+
+    def volume_exceeds(self, volume: float, pallet: bool = False) -> bool:
+        cap = self.load_cap_cuft(pallet)
+        return volume >= cap - 1e-6 if self.volume_strict else volume > cap + 1e-6
+
+    @property
+    def first_load_seconds(self) -> int:
+        return self.first_load_minutes * 60
+
+    @property
+    def floating(self) -> bool:
+        """Driver start floats with the first stop (needs a first appointment time)."""
+        return self.floating_start and self.earliest_delivery is not None
+
+    @property
+    def earliest_shift_start_s(self) -> int:
+        return min(time_to_seconds(self.earliest_shift_start), self.shift_start_s)
+
+    @property
+    def model_origin_s(self) -> int:
+        """Clock time of solver time 0: the earliest possible start when the start floats."""
+        return self.earliest_shift_start_s if self.floating else self.shift_start_s
+
+    @property
+    def model_offset_s(self) -> int:
+        """Seconds from solver time 0 to shift_start (0 unless the start floats)."""
+        return self.shift_start_s - self.model_origin_s
+
+    @property
+    def earliest_delivery_rel_s(self) -> int:
+        """First allowed arrival at a stop, seconds after shift start (0 = no limit)."""
+        if self.earliest_delivery is None:
+            return 0
+        return max(0, time_to_seconds(self.earliest_delivery) - self.shift_start_s)
+
+    @property
+    def turn_gap_seconds(self) -> int:
+        return self.turn_gap_minutes * 60
 
     @property
     def eta_window_seconds(self) -> int:
@@ -214,6 +408,26 @@ class RunSettings(BaseModel):
             offset, DEFAULT_PULL_FORWARD_VALUE_MINUTES[offset]
         )
         return int(minutes_value * 60 * (1 + self.effective_span_cost_coefficient))
+
+    def stop_penalty(self, tier: int, volume: float) -> int:
+        """Drop penalty for one stop.  With a volume value, a D stop is worth one stop plus
+        its volume / ``volume_value_cuft`` stops, so a planner short of trucks keeps both
+        many stops and much volume."""
+        base = self.penalty_for_tier(tier)
+        weight, per = self.goal_weights
+        if not per or tier > 3:
+            return base
+        # keep the tiers ordered: each tier up is multiplied by k = (full truck) / (empty
+        # stop), so the smallest stop of a tier outweighs the largest stop of the next one
+        k = (weight + self.truck_volume_cuft / per) / weight
+        return int(base * (weight + max(0.0, volume) / per) * k ** (3 - tier))
+
+    @property
+    def goal_weights(self) -> tuple[float, float | None]:
+        """(value of one stop, cu ft worth one more stop) for the goal."""
+        if self.goal == "custom":
+            return 1.0, self.volume_value_cuft
+        return GOAL_WEIGHTS[self.goal]
 
     def pull_forward_offsets(self) -> list[int]:
         return list(self.pull_forward_days)
@@ -276,6 +490,26 @@ def validate_penalty_invariants(settings: RunSettings, n_trucks: int) -> list[st
     return problems
 
 
+# goal -> (value of one stop, cu ft worth one more stop)
+GOAL_WEIGHTS: dict[str, tuple[float, float | None]] = {
+    "both": (1.0, 100.0),  # 100 cu ft = one stop
+    "stops": (1.0, 10_000.0),  # stops first; volume only breaks ties
+    "volume": (0.05, 100.0),  # volume first; a stop alone is worth 5 cu ft
+    "cluster": (1.0, 100.0),  # values stops like "both"; the routes stay compact
+}
+
+
+def goal_description(goal: GoalName) -> str:
+    return {
+        "both": "Stops + volume: each stop counts as 1 + its cu ft / 100 (300 cu ft = 4 stops).",
+        "stops": "Max stops: as many stops as possible; volume only decides between equal counts.",
+        "volume": "Max volume: as many cu ft as possible; small stops only when they fit on the way.",
+        "cluster": "Nearby stops together: stops + volume like A, but driving between stops costs "
+        "5x, so each truck takes a tight group of stops in one area.",
+        "custom": "Custom: each stop counts as 1 + its cu ft / Volume value (Advanced settings).",
+    }[goal]
+
+
 def preset_description(preset: PresetName) -> str:
     return {
         "A": "Fewest trucks (packed): use as few trucks as possible, each as full as possible.",
@@ -312,12 +546,97 @@ SETTING_TOOLTIPS: dict[str, str] = {
     "eta_window_hours": (
         "The customer window quoted around each ETA (ETA plus or minus this many hours)."
     ),
-    "travel_provider": "Auto uses road travel times from OSRM when it is running, otherwise straight-line estimates.",
+    "travel_provider": (
+        "Auto uses road travel times from OSRM when it is running, otherwise straight-line "
+        "estimates. TomTom uses truck times with predicted traffic (needs TOMTOM_API_KEY; "
+        "falls back to OSRM)."
+    ),
     "haversine_road_factor": (
         "Straight-line distance is multiplied by this to approximate road distance "
         "(estimates only)."
     ),
     "haversine_avg_speed_mph": "Average speed assumed for straight-line estimates (estimates only).",
+    "profile": (
+        "CA LFLT = the CA pilot rules (06:00 start, 800 / 400 cu ft, two turns, 200 / 300 mi). "
+        "Legacy = the original single-hub brief."
+    ),
+    "first_load_minutes": "Loading time at the DC before the first departure of the day.",
+    "floating_start": (
+        "Driver start follows the first stop: start = first appointment - first loading - "
+        "drive to the first stop, and the on-duty hours count from that start "
+        "(e.g. 06:00-16:00, or 08:00-18:00)."
+    ),
+    "earliest_shift_start": (
+        "Earliest a driver may start (the DC opens). A far first stop is then reached later "
+        "than the first appointment: start + first loading + drive."
+    ),
+    "late_first_stop_cost": (
+        "Cost per second a truck's first stop is reached after the first appointment "
+        "(a far first stop): higher = prefer first stops reachable by the appointment."
+    ),
+    "earliest_delivery": "First customer appointment; a truck that arrives earlier waits.",
+    "volume_strict": "Volume must stay below the cap (not equal to it).",
+    "pallet_volume_cuft": "Volume limit of a load carrying any shipment that needs a pallet.",
+    "unload_minutes_per_cuft": (
+        "Unloading minutes per cubic foot: a stop's service time = its shipments' volume x this rate."
+    ),
+    "max_one_way_miles": "One-way limit: miles from the DC to a load's last stop.",
+    "carrier_check_miles": "Loads farther than this one way are flagged: confirm with the carrier.",
+    "two_turn_max_miles": "Total miles of all turns of a truck that runs a second turn.",
+    "turn_gap_minutes": "A second turn leaves at least this long after the first turn's last delivery.",
+    "obs_mode": (
+        "Last = plan every other stop first, then add OBS-only stops just to raise the stop "
+        "count, on loads that already pass within the OBS radius. Exclude = leave OBS-only "
+        "stops out of the run. Normal = OBS stops compete like any other stop (tier 1)."
+    ),
+    "obs_radius_miles": (
+        "An OBS stop is only added to a load that already visits a planned stop within this "
+        "many miles (straight line)."
+    ),
+    "geocode_mode": (
+        "Address = geocode every row from its street address and use the file's latitude/longitude "
+        "only when the address cannot be matched. Fill = keep the file's coordinates and geocode "
+        "only rows without them."
+    ),
+    "traffic_depart_time": (
+        "TomTom: travel times are predicted for the delivery day at this time (historical "
+        "traffic). A past date uses the same weekday in the coming weeks."
+    ),
+    "truck_dimensions": (
+        "TomTom truck routing: length, height and gross weight (avoids roads the truck may "
+        "not use)."
+    ),
+    "traffic_factor": (
+        "OSRM road times assume empty roads; they are multiplied by this for daytime "
+        "traffic (distances are not changed). Straight-line estimates are not scaled."
+    ),
+    "goal": (
+        "Which stops to keep when there are more candidates than trucks: A = stops and "
+        "volume together, B = most stops, C = most volume, D = A with each truck's stops "
+        "kept close together, Custom = Volume value."
+    ),
+    "cluster_weight": (
+        "Goal D (Nearby stops together): driving between two stops costs 1 + this many "
+        "times its minutes. Higher = tighter groups per truck. Never drops a stop to do it."
+    ),
+    "use_priority": (
+        "On: priority 1 (existing LFLT loads in the upload's priority column) is always "
+        "planned before priority 2. Off: every candidate is alike and the plan keeps the "
+        "stops with the most stops and volume."
+    ),
+    "volume_value_cuft": (
+        "Used when Goal = Custom. Each stop counts as 1 + its volume / this many cu ft "
+        "(100 = a 300 cu ft stop is worth 4 small stops). Raises both stops and volume when "
+        "there are more candidates than trucks. 0 = count stops only."
+    ),
+    "stop_transit_minutes": (
+        "Stops in transit: minutes added to every drive between two stops (not to the drive "
+        "from or back to the DC). Unloading time is separate: stop volume x unloading rate."
+    ),
+    "same_location_travel_minutes": (
+        "Minimum driving minutes between two different stops that sit on the same point "
+        "(e.g. both placed on a ZIP centroid). 0 = use the map's travel time as is."
+    ),
     "pull_forward_value_minutes": (
         "A pull-forward stop is added if it costs less than this many minutes of extra driving."
     ),

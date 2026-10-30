@@ -13,12 +13,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from routeopt.config import RunSettings
 from routeopt.db.models import (
+    AgingSnapshotRow,
+    AppointmentRow,
     AppStateRow,
     Base,
     EditLogRow,
@@ -37,7 +39,7 @@ from routeopt.db.models import (
 )
 from routeopt.domain import Plan, Shipment, Stop, TruckConfig, hub_now
 from routeopt.ingest.validator import GeocodeResult
-from routeopt.travel import node_coords
+from routeopt.travel import node_coords, planning_matrix
 from routeopt.travel.base import Matrix, coords_hash
 from routeopt.travel.cache import TravelCache
 
@@ -200,8 +202,21 @@ class Repository:
 
     # ---- schema ---------------------------------------------------------------------
     def init_schema(self) -> None:
-        """Create all tables (idempotent)."""
+        """Create all tables (idempotent), and add columns introduced after a table was
+        first created (nullable ones only), so an existing database keeps working."""
         Base.metadata.create_all(self.engine)
+        insp = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                if not insp.has_table(table.name):
+                    continue
+                have = {c["name"] for c in insp.get_columns(table.name)}
+                for col in table.columns:
+                    if col.name not in have and col.nullable:
+                        kind = col.type.compile(dialect=self.engine.dialect)
+                        conn.execute(
+                            text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {kind}')
+                        )
 
     # ---- trucks ---------------------------------------------------------------------
     def list_trucks(self) -> list[TruckConfig]:
@@ -478,6 +493,8 @@ class Repository:
         matrix = TravelCache(DbTravelCacheStore(self._sf)).get(
             str(record_fields["matrix_source"]), node_coords(stops)
         )
+        if matrix is not None:  # the cache holds the raw matrix; plans use the adjusted one
+            matrix = planning_matrix(matrix, settings)
         if matrix is None:
             raise LookupError(
                 f"The travel matrix for run {run_id} is no longer in the cache; re-run the plan "
@@ -640,6 +657,186 @@ class Repository:
             else:
                 row.value_json = payload
                 row.updated_at = hub_now()
+
+    # ---- appointments -----------------------------------------------------------------
+    @staticmethod
+    def _original():  # type: ignore[no-untyped-def]
+        return (AppointmentRow.stage.is_(None)) | (AppointmentRow.stage == "original")
+
+    def select_truck_for_appointments(self, rows: list[dict[str, Any]]) -> int:
+        """Add one truck's shipments (from ``appointment_rows``) to the Appointments list.
+        A shipment already listed for the same run keeps its status.  Returns rows added."""
+        if not rows:
+            return 0
+        run_id = rows[0]["run_id"]
+        with self._sf() as session, session.begin():
+            existing = set(
+                session.execute(
+                    select(AppointmentRow.shipment_id).where(
+                        AppointmentRow.run_id == run_id, self._original()
+                    )
+                ).scalars()
+            )
+            added = 0
+            for r in rows:
+                if r["shipment_id"] in existing:
+                    continue
+                session.add(AppointmentRow(**r))
+                added += 1
+            return added
+
+    def unselect_truck(self, run_id: str, truck: str) -> None:
+        """Remove a truck picked by mistake (its original rows and its re-plan rows)."""
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.run_id == run_id, AppointmentRow.truck == truck
+                )
+            )
+
+    def selected_trucks(self, run_id: str) -> set[str]:
+        with self._sf() as session:
+            return set(
+                session.execute(
+                    select(AppointmentRow.truck).where(
+                        AppointmentRow.run_id == run_id, self._original()
+                    )
+                ).scalars()
+            )
+
+    def add_appointments(self, rows: list[dict[str, Any]]) -> int:
+        """Insert appointment rows (a stop added by hand); returns how many."""
+        with self._sf() as session, session.begin():
+            for row in rows:
+                session.add(AppointmentRow(**row))
+        return len(rows)
+
+    def save_reoptimized(self, run_id: str, rows: list[dict[str, Any]]) -> dict[str, int]:
+        """Store a re-plan (``appointment_rows`` of the new version, every picked truck) as
+        the run's Re-optimized set, replacing an earlier one.  The original rows are not
+        touched.  A shipment that is also in the original (or the earlier re-plan) keeps
+        its status, note, APPT # / time and load ID; new ones start as Not requested."""
+        carry = ("status", "note", "appt_num", "appt_time", "load_id")
+        counts = {"kept": 0, "added": 0}
+        with self._sf() as session, session.begin():
+            known: dict[str, dict[str, Any]] = {}
+            for a in session.execute(
+                select(AppointmentRow)
+                .where(AppointmentRow.run_id == run_id)
+                .order_by(AppointmentRow.id)
+            ).scalars():
+                known[a.shipment_id] = {c: getattr(a, c) for c in carry}  # later wins
+            session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.run_id == run_id, AppointmentRow.stage == "reoptimized"
+                )
+            )
+            for r in rows:
+                values = {**r, "stage": "reoptimized"}
+                if r["shipment_id"] in known:
+                    values |= known[r["shipment_id"]]
+                    counts["kept"] += 1
+                else:
+                    counts["added"] += 1
+                session.add(AppointmentRow(**values))
+        return counts
+
+    def list_appointments(self) -> list[dict[str, Any]]:
+        cols = [c.name for c in AppointmentRow.__table__.columns]
+        with self._sf() as session:
+            rows = session.execute(
+                select(AppointmentRow).order_by(
+                    AppointmentRow.delivery_date.desc(),
+                    AppointmentRow.run_id,
+                    AppointmentRow.truck,
+                    AppointmentRow.load_seq,
+                    AppointmentRow.stop_seq,
+                    AppointmentRow.id,
+                )
+            ).scalars()
+            return [{c: getattr(r, c) for c in cols} for r in rows]
+
+    def update_appointments(self, changes: dict[int, dict[str, Any]]) -> int:
+        """Set status / note / load id / appointment # / stop order by row id; returns the
+        number of values changed."""
+        n = 0
+        with self._sf() as session, session.begin():
+            for row_id, values in changes.items():
+                r = session.get(AppointmentRow, row_id)
+                if r is None:
+                    continue
+                for key in ("status", "note", "load_id", "appt_num", "appt_time", "stop_seq"):
+                    if key in values and getattr(r, key) != values[key]:
+                        setattr(r, key, values[key])
+                        n += 1
+                r.updated_at = hub_now()
+                # one shipment, one appointment: the original and the re-plan row agree
+                shared = {k: values[k] for k in ("status", "appt_num", "appt_time") if k in values}
+                if shared:
+                    for twin in session.execute(
+                        select(AppointmentRow).where(
+                            AppointmentRow.run_id == r.run_id,
+                            AppointmentRow.shipment_id == r.shipment_id,
+                            AppointmentRow.id != r.id,
+                        )
+                    ).scalars():
+                        for k, v in shared.items():
+                            setattr(twin, k, v)
+                        twin.updated_at = hub_now()
+        return n
+
+    # ---- aging snapshots (Analyze) ------------------------------------------------------
+    def save_aging(
+        self, level: str, day: dt.date, rows: list[dict[str, Any]], source_name: str = ""
+    ) -> None:
+        """Store one day's aging rows for a level, replacing an earlier upload of that day."""
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AgingSnapshotRow).where(
+                    AgingSnapshotRow.level == level, AgingSnapshotRow.snapshot_date == day
+                )
+            )
+            session.add(
+                AgingSnapshotRow(
+                    level=level,
+                    snapshot_date=day,
+                    rows=len(rows),
+                    data_json=_dumps(rows),
+                    source_name=source_name[:255],
+                )
+            )
+
+    def list_aging(self, level: str) -> list[tuple[dt.date, int, str]]:
+        """(snapshot day, rows, file name) of every stored upload of a level, newest first."""
+        with self._sf() as session:
+            return [
+                (r.snapshot_date, r.rows, r.source_name)
+                for r in session.execute(
+                    select(AgingSnapshotRow)
+                    .where(AgingSnapshotRow.level == level)
+                    .order_by(AgingSnapshotRow.snapshot_date.desc())
+                ).scalars()
+            ]
+
+    def load_aging(self, level: str) -> list[dict[str, Any]]:
+        """Every stored row of a level (each carries its SNAPSHOT_DATE)."""
+        out: list[dict[str, Any]] = []
+        with self._sf() as session:
+            for r in session.execute(
+                select(AgingSnapshotRow).where(AgingSnapshotRow.level == level)
+            ).scalars():
+                for row in json.loads(r.data_json):
+                    row["SNAPSHOT_DATE"] = r.snapshot_date.isoformat()
+                    out.append(row)
+        return out
+
+    def delete_aging(self, level: str, day: dt.date) -> None:
+        with self._sf() as session, session.begin():
+            session.execute(
+                delete(AgingSnapshotRow).where(
+                    AgingSnapshotRow.level == level, AgingSnapshotRow.snapshot_date == day
+                )
+            )
 
     # ---- caches -----------------------------------------------------------------------
     def travel_cache_store(self) -> DbTravelCacheStore:

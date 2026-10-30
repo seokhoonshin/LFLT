@@ -25,7 +25,7 @@ from tests.factories import PLAN_DATE, make_settings
 
 
 def test_defaults_match_brief() -> None:
-    s = RunSettings(plan_date=PLAN_DATE)
+    s = RunSettings(plan_date=PLAN_DATE, profile="legacy")
     assert s.shift_start == dt.time(8, 0) and s.on_duty_hours == 10 and s.truck_volume_cuft == 600
     assert s.stop_buffer_minutes == 20 and s.reload_minutes == 60 and s.lunch_minutes == 30
     assert s.max_loads_per_truck == 3 and s.preset == "A" and s.solve_time_seconds == 60
@@ -42,8 +42,29 @@ def test_defaults_match_brief() -> None:
         s.effective_truck_fixed_cost == PRESET_A_FIXED_COST
         and s.effective_span_cost_coefficient == 0
     )
-    b = RunSettings(plan_date=PLAN_DATE, preset="B")
+    b = RunSettings(plan_date=PLAN_DATE, profile="legacy", preset="B")
     assert b.effective_truck_fixed_cost == 0 and b.effective_span_cost_coefficient == 10
+
+
+def test_ca_lflt_profile_defaults() -> None:
+    s = RunSettings(plan_date=PLAN_DATE)
+    assert s.profile == "ca_lflt"
+    assert s.shift_start == dt.time(6, 0) and s.first_load_minutes == 90
+    assert s.reload_minutes == 120 and s.floating and s.earliest_shift_start == dt.time(6, 0)
+    assert s.model_origin_s == 6 * 3600 and s.model_offset_s == 0
+    assert s.earliest_delivery == dt.time(8, 0) and s.earliest_delivery_rel_s == 2 * 3600
+    assert s.on_duty_hours == 10 and s.stop_buffer_minutes == 0 and s.stop_transit_minutes == 20
+    assert s.truck_volume_cuft == 800 and s.volume_strict and s.volume_cap_tenths == 7999
+    assert s.pallet_volume_cuft == 400 and s.pallet_cap_tenths == 3999
+    assert s.volume_exceeds(800) and not s.volume_exceeds(799.9)
+    assert s.volume_exceeds(400, pallet=True) and not s.volume_exceeds(400)
+    assert s.unload_minutes_per_cuft == 0.1 and s.max_loads_per_truck == 2
+    assert s.max_one_way_miles == 200 and s.carrier_check_miles == 150
+    assert s.two_turn_max_miles == 300 and s.turn_gap_minutes == 180
+    assert s.lunch_minutes == 30 and s.obs_mode == "last" and not s.require_shipment_suffix
+    # an explicit value wins over the profile, and a saved run round-trips
+    assert RunSettings(plan_date=PLAN_DATE, truck_volume_cuft=700).truck_volume_cuft == 700
+    assert RunSettings.model_validate(s.model_dump(mode="json")) == s
 
 
 def test_settings_validation_messages() -> None:

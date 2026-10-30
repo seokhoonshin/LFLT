@@ -7,6 +7,20 @@ picks a preset, runs a ≤ 60-second optimization, reviews the routes on a map, 
 if needed, and exports an Excel plan plus printable PDF route sheets.  Every run, version,
 edit and export is saved for audit.
 
+**CA LFLT pilot (default rules).**  Runs use the *CA LFLT* profile unless *Legacy* is
+chosen on New Run (`--profile legacy` on the CLI).  It plans two trucks out of LGC2 and LGC7
+(two DCs at 5550 Mango Ave, Rialto) and LGC8 (5267 Sierra Ave, Fontana); a load is picked up
+at one DC only under the rules in
+[`docs/CA_LFLT_RouteOpt_Conditions_EN.md`](docs/CA_LFLT_RouteOpt_Conditions_EN.md)
+([Korean](docs/CA_LFLT_RouteOpt_Conditions_KR.md)): 06:00 start with 60 min loading,
+first appointment 08:00, less than 800 cu ft per load (less than 400 when any shipment
+needs a pallet: every product group except HA),
+0.1 min per cu ft at each stop + 20 min on every stop-to-stop drive, less than 200 mi one way (150-200 mi flagged for a
+carrier check), two turns with less than 300 mi in total and at least 3 h between the
+first turn's last delivery and the second turn's departure, lunch 30 min between 11:00
+and 14:00.  OBS-only stops can be excluded or added last, only next to planned stops.
+How each rule is modelled is in [ASSUMPTIONS.md](ASSUMPTIONS.md#ca-lflt-profile).
+
 Everything is open source and runs locally: **Google OR-Tools** (routing), **OSRM** +
 **OpenStreetMap** (road travel times, via Docker), the **US Census Geocoder** (only for
 rows without coordinates), **Streamlit** (UI), **SQLAlchemy/SQLite** (history),
@@ -73,7 +87,35 @@ routeopt osrm-check         # -> "OSRM at http://localhost:5000: healthy"
 `docker/osrm/README.md` documents disk/RAM needs, how to change the coverage radius, how
 to refresh the map extract, and troubleshooting.  `OSRM_URL` in `.env` points the app at a different host/port.
 
+### TomTom (optional): truck times with predicted traffic
+
+OSRM gives free-flow car times, so CA LFLT multiplies them by the *traffic factor* (1.3).
+For truck-specific times with traffic, set a TomTom key and pick **Travel times = TomTom**
+on New Run (`--provider tomtom` on the CLI):
+
+1. Create a free key at <https://developer.tomtom.com> (no card; the free plan is a daily
+   request allowance, blocked rather than billed when used up).
+2. Add `TOMTOM_API_KEY=...` to `.env` and restart the app.
+
+The whole stop matrix is requested from TomTom Matrix Routing v2 with `travelMode=truck`
+(length / height / gross weight from Advanced settings), `traffic=historical` and
+`departAt` = the delivery day at *Departure time for traffic* (10:00).  A past delivery day
+uses the same weekday in the coming weeks.  Requests are split into blocks of at most
+`TOMTOM_MAX_CELLS` (200) origin x destination cells.  The result is cached per day, time
+and truck, so re-running the same stops spends nothing.  No key, a refused key, an
+exhausted quota or a network error falls back to OSRM x traffic factor with a warning.
+Customer coordinates are sent to TomTom: check this is allowed before enabling it.
+
 ## 3. Run the app
+
+**CA LFLT pilot, one command** (OSRM container `routeopt-osrm-ca` on port 5001):
+
+```powershell
+cd <this folder>
+.\start_ca.ps1            # starts OSRM, stops an old app, opens http://localhost:8520
+.\start_ca.ps1 -Update    # git pull first (when the folder is a git clone)
+```
+
 
 ```powershell
 streamlit run app\Home.py
@@ -99,6 +141,37 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    tick *Export anyway* and give a reason (logged and printed on the export).
 5. **History** — every run and version: open, re-export, compare two runs' KPIs, download
    the original upload, soft-delete/restore.
+6. **Appointments** — the trucks picked with **Select this truck** on Results.  Per load,
+   stop 1 is the warehouse (its address and the load's total volume), then one row per
+   stop (shipments to one stop merged; *By shipment* lists them one by one): load ID ·
+   Stop · date · APPT time · APPT # · Customer · Address · Volume · Miles from prev · POC ·
+   Note · Shipments · Shipment IDs · Status.  load ID, stop order, APPT time, APPT #, note
+   and status (Not requested / Requested / Pending / Confirmed / Declined) are editable;
+   press **Save**.  Download one load or every load of the day as Excel (load ID … Note;
+   declined stops left out).  Two tabs: **Original** (the trucks as picked — the record,
+   declined stops included) and **Re-optimized**: *Re-optimize … without declined stops*
+   re-plans the picked trucks with the declined stops left out, every other stop kept on
+   its truck and the run's other candidates (from the original upload) filling the room;
+   it is saved as a new version of the run.  A status set in either tab applies to the
+   same shipment in the other.  *Add a stop … by hand*: type a shipment ID and the whole
+   stop it belongs to (every shipment at that address in the upload, details copied) is
+   added as the load's last stop; a shipment not in the upload can be typed in.
+   *Results so far* shows the confirmed / declined share over any range of days, grouped
+   by day, week, month or year.  A third tab, **Finalized**, keeps only the confirmed stops
+   of the latest set (the loads that go; read-only) and finds a load by its load ID.
+   Every load in the three tabs has a **Map** toggle.  The warehouse row's APPT time is
+   the **pickup**: the first stop's APPT time (else its ETA) minus the drive from the DC,
+   never before DC opening + loading (6:00 + 1:30 = 7:30) on load 1; Results shows the
+   same pickup as the first row of every load.
+
+7. **Analyze** — dashboards.  *Appointment results*: confirmed / declined / open picked
+   stops over any range of days, grouped by day, week, month or year.  *Aging — load
+   level* / *Aging — shipment level*: upload the Plan 7774 aging query result (load or
+   shipment version; the level is detected) once a day; every snapshot day is kept.
+   Per day: the Origin × Hold / Requested summary (loads, volume, order value), PG 20
+   volume past / not past RDD and PG 30, 50 & 80 volume by Drop in TMS aging (every
+   warehouse × Hold / Requested listed, 0 when empty), a daily trend chart (split by
+   status, origin, aging or plan group) and a build-your-own pivot.
 
 ### Command line
 
@@ -135,7 +208,20 @@ required header cannot be matched.
 | `pieces` | yes | ≥ 1 for LMD/RTN, 0 allowed for INC |
 | `service_minutes` | yes | install / pickup / check time |
 
-Rows sharing an address (+ zip) become one **stop**, always served together by one load.
+CA LFLT uploads may also carry (and need none of `model_code`, `weight_lb`, `pieces`,
+`service_minutes`, nor the `_LMD`/`_RTN`/`_INC` suffix — every row is a delivery):
+
+| Column | Notes |
+|---|---|
+| `origin_dc` | `LGC2`, `LGC7` or `LGC8` (aliases: `DC`, `FRST_SHPG_LOC_CD`, …); blank = LGC2 |
+| `pallet_required` | `Y` / `N`, or the product group (aliases `HQ`, `product group`): `HA` = no pallet, every other group (`AC`, `ES`, `BS`, `MS`, …) = pallet; a load with any pallet shipment stays below 400 cu ft |
+| `priority` | `1` existing LFLT, `2` add-on candidate, `3` low priority (the stop's tier) |
+| `declared_value` | Optional. Declared value per shipment; summed per load in the **Load Summary** export (DECLARED VAL) |
+| `bill_to_code` | Optional. Bill-to code, shown on the **Appointments** page |
+| `Memo Text` | merged into notes; a phone / e-mail in it becomes the stop's appointment contact |
+
+Rows sharing an address (+ zip) become one **stop**, always served together by one load
+(per DC: the same address served from LGC2 and from LGC8 is two stops).
 
 ## 6. Settings reference
 
@@ -148,7 +234,11 @@ Rows sharing an address (+ zip) become one **stop**, always served together by o
 | On-duty hours | 10 | shift start → return of the last load, incl. driving, service, buffer, reloads and lunch |
 | Truck volume | 600 cu ft | never exceeded at any point (deliveries leave, returns board) |
 | Weight / pieces cap | off | optional hard caps; always reported |
-| Stop buffer | 20 min | once per stop |
+| Stop buffer | 20 min (CA: 0) | once per stop |
+| Stops in transit | CA: 20 min | added to every stop-to-stop drive |
+| Goal (CA) | A — Stops + volume | which stops to keep when candidates exceed the trucks: A stops + volume (1 + cu ft / 100 per stop), B max stops, C max volume, D nearby stops together (A, with stop-to-stop driving costing 1 + Nearby-stops weight (4) x so each truck keeps to one area), Custom = Volume value |
+| Volume value | CA: 100 cu ft | Goal = Custom: a stop counts as 1 + its cu ft / this value; 0 = count stops only |
+| Priority 1 first | CA: off | on = the upload's priority 1 (existing LFLT loads) is always planned first; off = all candidates alike |
 | Reload | 60 min | between loads of the same truck (unload returns, load the next set) |
 | Lunch | 30 min | during a reload when the truck has 2+ loads, otherwise an explicit gap |
 | Lunch window | 11:00–14:00 start | preferred window for the gap; clear for "any time" |

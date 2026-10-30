@@ -16,12 +16,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from routeopt.domain import Plan, Stop, clock
+from routeopt.appointments import appointment_rows
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 from routeopt.edit.revalidate import can_export
 from routeopt.export.excel import export_excel
+from routeopt.export.load_summary import export_load_summary_pdf
 from routeopt.export.mapping import build_map, map_html
 from routeopt.export.route_sheets_pdf import export_route_sheets
 from routeopt.travel.osrm import OSRMProvider
+from routeopt.travel.tomtom import is_road_source, source_label
 
 from _common import (
     current_run_id,
@@ -81,7 +84,7 @@ st.title(f"Results — run {plan.run_id} · v{plan.plan_version}")
 st.caption(
     f"Delivery day **{plan.plan_date.isoformat()}** · preset **{plan.settings.get('preset')}** · "
     f"optimizer {status_text(plan.solver_stats.status)} in {plan.solver_stats.wall_time_s} s · "
-    f"travel times: **{'OSRM road network' if plan.matrix_source == 'osrm' else 'straight-line estimates'}** · "
+    f"travel times: **{source_label(plan.matrix_source)}** · "
     f"source file: {rec.source_name or '—'}"
 )
 fallback_banner(plan)
@@ -105,7 +108,7 @@ kpi_cards(plan)
 # ---- map --------------------------------------------------------------------------------
 st.subheader("Map")
 geometry_fn = None
-if plan.matrix_source == "osrm" and osrm_healthy():
+if is_road_source(plan.matrix_source) and osrm_healthy():
     provider = OSRMProvider(cfg.osrm_url, timeout_s=cfg.osrm_timeout_s)
     geom_cache: dict = st.session_state.setdefault("geometry_cache", {})
 
@@ -131,11 +134,16 @@ else:
     components.html(
         map_html(plan, stops, settings, geometry_fn=geometry_fn), height=580, scrolling=False
     )
-if plan.matrix_source != "osrm":
+if not is_road_source(plan.matrix_source):
     st.caption("Straight lines: OSRM was not available for this run, so no road geometry is drawn.")
 
 # ---- trucks ------------------------------------------------------------------------------
 st.subheader("Trucks and loads")
+st.caption(
+    "Pick the trucks you will actually run with **Select this truck**: their stops go to the "
+    "**Appointments** page (sidebar), where you track each appointment request."
+)
+picked = repo.selected_trucks(plan.run_id)
 for truck in plan.trucks:
     loads = [load for load in truck.loads if load.stops]
     if not loads:
@@ -143,17 +151,42 @@ for truck in plan.trucks:
     title = (
         f"{truck.number} · {truck.driver_name or 'no driver'} — {len(loads)} load(s), "
         f"{sum(len(load.stops) for load in loads)} stops, on duty {minutes_text(truck.on_duty_minutes)} "
-        f"({clock(loads[0].depart_s)} → {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
+        f"(start {clock(truck.start_s if truck.start_s is not None else loads[0].depart_s)}"
+        f" → back {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
     )
-    with st.expander(title):
+    head, pick = st.columns([8, 1.4])
+    if truck.number in picked:
+        pick.button(
+            "✓ Selected",
+            key=f"picked-{truck.number}",
+            disabled=True,
+            use_container_width=True,
+            help="Listed on the Appointments page (remove it there).",
+        )
+    elif pick.button(
+        "Select this truck", key=f"pick-{truck.number}", type="primary", use_container_width=True
+    ):
+        added = repo.select_truck_for_appointments(appointment_rows(plan, stops, truck.number))
+        st.toast(f"{truck.number}: {added} shipment(s) added to Appointments.")
+        st.rerun()
+    with head.expander(title):
         for load in loads:
+            cap = settings.load_cap_cuft(load.pallet)
             st.markdown(
-                f"**Load {load.seq}** · depart {clock(load.depart_s)} · return {clock(load.return_s)} · "
-                f"load-out {load.load_out_volume:.0f} cu ft ({100 * load.load_out_volume / settings.truck_volume_cuft:.0f}%) · "
+                f"**Load {load.seq}** from {SITE_BY_CODE[load.site].name}"
+                + (" (pallet trip)" if load.pallet and cap != settings.truck_volume_cuft else "")
+                + f" · warehouse pickup {clock(load.depart_s)} · return {clock(load.return_s)} · "
+                f"load-out {load.load_out_volume:.0f} cu ft ({100 * load.load_out_volume / cap:.0f}%) · "
+                f"{load.one_way_miles:.0f} mi one way · "
                 f"max on road {load.max_volume_on_road:.0f} cu ft · {load.drive_minutes:.0f} min / {load.distance_miles:.1f} mi driving"
                 + (
                     f" · reload from {clock(load.reload_start_s)}"
                     if load.reload_start_s is not None
+                    else ""
+                )
+                + (
+                    f" · {load.deadhead_minutes:.0f} min DC-to-DC first"
+                    if load.deadhead_minutes
                     else ""
                 )
             )
@@ -214,7 +247,7 @@ st.subheader("Export")
 gate = can_export(plan)
 if not gate.allowed:
     st.error(gate.message + " Use the Edit page to fix the plan or to export anyway with a reason.")
-e1, e2, e3, _ = st.columns([1, 1, 1, 3])
+e1, e2, e4, e3, _ = st.columns([1, 1, 1, 1, 2])
 out_dir = Path(cfg.exports_dir)
 if e1.button("Export Excel", disabled=not gate.allowed):
     path = export_excel(
@@ -236,6 +269,12 @@ if e2.button("Export PDF route sheets", disabled=not gate.allowed):
         plan.run_id, plan.plan_version, "pdf", str(path), plan.export_override_reason
     )
     st.session_state["last_pdf"] = str(path)
+if e4.button("Export load summary PDF", disabled=not gate.allowed):
+    path = export_load_summary_pdf(plan, stops, settings, out_dir)
+    repo.record_export(
+        plan.run_id, plan.plan_version, "pdf", str(path), plan.export_override_reason
+    )
+    st.session_state["last_summary_pdf"] = str(path)
 if e3.button("Edit this plan", type="primary"):
     st.switch_page("pages/4_Edit.py")
 for key, label, mime in (
@@ -245,6 +284,7 @@ for key, label, mime in (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ),
     ("last_pdf", "Download PDF", "application/pdf"),
+    ("last_summary_pdf", "Download load summary PDF", "application/pdf"),
 ):
     p = st.session_state.get(key)
     if p and Path(p).exists() and plan.run_id in p and f"_v{plan.plan_version}" in p:

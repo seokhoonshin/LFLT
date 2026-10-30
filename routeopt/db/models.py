@@ -216,3 +216,56 @@ class AppStateRow(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class AppointmentRow(Base):
+    """One shipment of a truck picked on Results for appointment requests (a snapshot of
+    the plan at the time it was picked, plus the status the planner sets)."""
+
+    __tablename__ = "appointments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    truck: Mapped[str] = mapped_column(String(64))
+    load_seq: Mapped[int] = mapped_column(Integer)
+    stop_seq: Mapped[int] = mapped_column(Integer)
+    stop_id: Mapped[str] = mapped_column(String(32))
+    shipment_id: Mapped[str] = mapped_column(String(128))
+    customer: Mapped[str] = mapped_column(Text, default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    bill_to_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    delivery_date: Mapped[dt.date] = mapped_column(Date)
+    eta: Mapped[str] = mapped_column(String(16), default="")
+    window: Mapped[str] = mapped_column(String(40), default="")
+    volume_cuft: Mapped[float] = mapped_column(Float, default=0.0)
+    miles_from_prev: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_transit_min: Mapped[float] = mapped_column(Float, default=0.0)
+    poc: Mapped[str] = mapped_column(Text, default="")
+    dc: Mapped[str] = mapped_column(String(16), default="")
+    status: Mapped[str] = mapped_column(String(16), default="Not requested")
+    note: Mapped[str] = mapped_column(Text, default="")
+    load_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # TMS load number
+    appt_num: Mapped[str | None] = mapped_column(String(64), nullable=True)  # appointment #
+    appt_time: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "HH:MM" set
+    # None / "original" = the trucks as picked (kept as the record, declined included);
+    # "reoptimized" = the re-plan without the declined stops
+    stage: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    selected_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class AgingSnapshotRow(Base):
+    """One uploaded aging query result (Analyze page): a snapshot day, at load or shipment
+    level, stored as a JSON list of rows.  A new upload for the same day and level
+    replaces it."""
+
+    __tablename__ = "aging_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str] = mapped_column(String(16), index=True)  # "load" / "shipment"
+    snapshot_date: Mapped[dt.date] = mapped_column(Date, index=True)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    data_json: Mapped[str] = mapped_column(Text)
+    source_name: Mapped[str] = mapped_column(String(255), default="")
+    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

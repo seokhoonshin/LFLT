@@ -9,7 +9,7 @@ warning) and returns a list of :class:`Violation` (empty = valid).
 from __future__ import annotations
 
 from routeopt.config import RunSettings
-from routeopt.domain import Plan, PlanTruck, Stop, Violation, clock
+from routeopt.domain import Load, Plan, PlanTruck, Stop, Violation, clock
 from routeopt.solver.timeline import (
     RouteSkeleton,
     build_truck,
@@ -34,7 +34,6 @@ def check_truck(
     if not truck.used:
         return v
     loads = [load for load in truck.loads if load.stops]
-    cap = settings.truck_volume_cuft
     if len(loads) > settings.max_loads_per_truck:
         v.append(
             Violation(
@@ -52,24 +51,33 @@ def check_truck(
                 code="on_duty",
                 truck=number,
                 message=(
-                    f"On duty {truck.on_duty_minutes:.0f} min (returns {clock(loads[-1].return_s)}) "
+                    f"On duty {truck.on_duty_minutes:.0f} min "
+                    f"({clock(truck.start_s if truck.start_s is not None else settings.shift_start_s)}"
+                    f" - {clock(loads[-1].return_s)}) "
                     f"exceeds the {limit_min:.0f}-min limit."
                 ),
             )
         )
+    v.extend(_ca_rules(truck, loads, stops_by_id, settings))
     for load in loads:
-        if load.load_out_volume > cap + EPS:
+        cap = settings.load_cap_cuft(load.pallet)
+        limit = f"less than {cap:.0f}" if settings.volume_strict else f"{cap:.0f}"
+        if settings.volume_exceeds(load.load_out_volume, load.pallet):
             v.append(
                 Violation(
                     severity="error",
                     code="volume",
                     truck=number,
                     load=load.seq,
-                    message=f"Load-out {load.load_out_volume:.0f} cu ft exceeds the truck's {cap:.0f} cu ft.",
+                    message=(
+                        f"Load-out {load.load_out_volume:.0f} cu ft exceeds the "
+                        + ("pallet load's" if cap != settings.truck_volume_cuft else "truck's")
+                        + f" {limit} cu ft."
+                    ),
                 )
             )
         for visit in load.stops:
-            if visit.volume_after > cap + EPS:
+            if settings.volume_exceeds(visit.volume_after, load.pallet):
                 v.append(
                     Violation(
                         severity="error",
@@ -79,7 +87,7 @@ def check_truck(
                         stop_id=visit.stop_id,
                         message=(
                             f"After stop {visit.seq} the truck would carry {visit.volume_after:.0f} cu ft "
-                            f"(max {cap:.0f}); a return was picked up before there was room."
+                            f"(max {limit}); a return was picked up before there was room."
                         ),
                     )
                 )
@@ -144,7 +152,9 @@ def check_truck(
     elif lunch.kind == "break" and lunch.start_s is not None and lunch.end_s is not None:
         duration_ok = lunch.end_s - lunch.start_s >= settings.lunch_seconds - 1
         inside_day = (
-            lunch.start_s >= settings.shift_start_s and lunch.end_s <= loads[-1].return_s + 1
+            lunch.start_s
+            >= (truck.start_s if truck.start_s is not None else settings.shift_start_s)
+            and lunch.end_s <= loads[-1].return_s + 1
         )
         overlaps = any(
             visit.arrive_s < lunch.end_s and lunch.start_s < visit.depart_s
@@ -211,7 +221,12 @@ def check_truck(
                 )
         if load.solver_return_s is not None:
             expected = _solver_equivalent(truck, settings, load.seq, load.return_s, None)
-            if abs(expected - load.solver_return_s) > tol:
+            # a short route that waits for the lunch window on its way back: the solver
+            # only budgets the lunch itself, not the wait for the window to open
+            wait = 0
+            if load.lunch_on_return and truck.lunch.start_s is not None and load.stops:
+                wait = max(0, truck.lunch.start_s - load.stops[-1].depart_s)
+            if not expected - wait - tol <= load.solver_return_s <= expected + tol:
                 v.append(
                     Violation(
                         severity="warning",
@@ -224,6 +239,105 @@ def check_truck(
                         ),
                     )
                 )
+    return v
+
+
+def _ca_rules(
+    truck: PlanTruck,
+    loads: list[Load],
+    stops_by_id: dict[str, Stop],
+    settings: RunSettings,
+) -> list[Violation]:
+    """Site, distance, turn-gap and appointment rules (CA LFLT; off under legacy)."""
+    v: list[Violation] = []
+    number = truck.number
+    first_rel = settings.earliest_delivery_rel_s
+    for i, load in enumerate(loads):
+        sites = {stops_by_id[x.stop_id].site for x in load.stops if x.stop_id in stops_by_id}
+        if len(sites) > 1:
+            v.append(
+                Violation(
+                    severity="error",
+                    code="site",
+                    truck=number,
+                    load=load.seq,
+                    message=f"Load {load.seq} mixes stops of {' and '.join(sorted(sites))}; "
+                    "a load leaves from one DC.",
+                )
+            )
+        if settings.max_one_way_miles is not None:
+            if load.one_way_miles >= settings.max_one_way_miles - EPS:
+                v.append(
+                    Violation(
+                        severity="error",
+                        code="distance",
+                        truck=number,
+                        load=load.seq,
+                        message=f"Load {load.seq} runs {load.one_way_miles:.0f} mi one way "
+                        f"(must be less than {settings.max_one_way_miles:.0f} mi).",
+                    )
+                )
+            elif (
+                settings.carrier_check_miles is not None
+                and load.one_way_miles >= settings.carrier_check_miles
+            ):
+                v.append(
+                    Violation(
+                        severity="warning",
+                        code="carrier_check",
+                        truck=number,
+                        load=load.seq,
+                        message=f"Load {load.seq} runs {load.one_way_miles:.0f} mi one way "
+                        f"({settings.carrier_check_miles:.0f}-{settings.max_one_way_miles:.0f} mi): "
+                        "confirm with the carrier in advance.",
+                    )
+                )
+        if i >= 1 and settings.turn_gap_seconds:
+            prev = loads[i - 1]
+            if (
+                prev.last_delivery_s is not None
+                and load.depart_s < prev.last_delivery_s + settings.turn_gap_seconds - 1
+            ):
+                v.append(
+                    Violation(
+                        severity="error",
+                        code="turn_gap",
+                        truck=number,
+                        load=load.seq,
+                        message=f"Turn {load.seq} leaves {clock(load.depart_s)}, less than "
+                        f"{settings.turn_gap_minutes} min after the last delivery of turn "
+                        f"{prev.seq} ({clock(prev.last_delivery_s)}).",
+                    )
+                )
+        if first_rel:
+            for visit in load.stops:
+                if visit.arrive_s < settings.shift_start_s + first_rel - 1:
+                    v.append(
+                        Violation(
+                            severity="error",
+                            code="appointment",
+                            truck=number,
+                            load=load.seq,
+                            stop_id=visit.stop_id,
+                            message=f"Stop {visit.seq} is served at {clock(visit.arrive_s)}, before "
+                            f"the first appointment time {clock(settings.shift_start_s + first_rel)}.",
+                        )
+                    )
+    total = sum(load.distance_miles for load in loads)
+    if (
+        settings.two_turn_max_miles is not None
+        and len(loads) >= 2
+        and total >= settings.two_turn_max_miles - EPS
+    ):
+        v.append(
+            Violation(
+                severity="error",
+                code="distance",
+                truck=number,
+                message=f"Two-turn truck drives {total:.0f} mi in total "
+                f"(must be less than {settings.two_turn_max_miles:.0f} mi).",
+            )
+        )
     return v
 
 

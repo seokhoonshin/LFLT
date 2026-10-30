@@ -186,10 +186,13 @@ def test_hard_errors_are_reported_per_row() -> None:
         _row(10, service_minutes=None),
         _row(11, customer_name=""),
     ]
-    res = validate_rows(rows, PLAN_DATE, make_settings())
+    res = validate_rows(rows, PLAN_DATE, make_settings(require_shipment_suffix=True))
     assert not res.ok
     by_row = {e.row: e.message for e in res.errors}
     assert "_LMD, _RTN or _INC" in by_row[2]
+    # off by default: an id without the suffix is accepted
+    plain = validate_rows([_row(2, shipment_id="SH0002")], PLAN_DATE, make_settings())
+    assert plain.ok
     assert "Unknown order type" in by_row[3]
     assert "not a date" in by_row[4]
     assert "negative" in by_row[5]
@@ -321,3 +324,24 @@ def test_sample_workbook_round_trips_through_loader(sample_workbook: Path, fake_
     types = {s.shipment_type for s in res.shipments}
     assert types == {ShipmentType.LMD, ShipmentType.RTN, ShipmentType.INC}
     assert {s.day_tag for s in res.shipments} == {DayTag.D, DayTag.D1, DayTag.D2}
+
+
+def test_address_mode_geocodes_rows_that_already_have_coordinates(fake_geocoder) -> None:  # type: ignore[no-untyped-def]
+    rows = [
+        _row(2, latitude=33.0, longitude=-117.0),  # e.g. a ZIP centroid in the file
+        _row(3, latitude=33.0, longitude=-117.0, address="1 Nowhere Ln"),
+    ]
+    settings = make_settings(geocode_mode="address")
+    res = validate_rows(rows, PLAN_DATE, settings, geocoder=fake_geocoder)
+    assert res.ok and res.geocoded_rows == [2]
+    assert (res.shipments[0].latitude, res.shipments[0].longitude) != (33.0, -117.0)
+    # unmatched address keeps the file's coordinates, with a warning instead of an error
+    assert (res.shipments[1].latitude, res.shipments[1].longitude) == (33.0, -117.0)
+    assert any(w.row == 3 and "from the file" in w.message for w in res.warnings)
+
+
+def test_fill_mode_keeps_file_coordinates(fake_geocoder) -> None:  # type: ignore[no-untyped-def]
+    rows = [_row(2, latitude=33.0, longitude=-117.0)]
+    res = validate_rows(rows, PLAN_DATE, make_settings(geocode_mode="fill"), geocoder=fake_geocoder)
+    assert fake_geocoder.calls == 0 and res.geocoded_rows == []
+    assert (res.shipments[0].latitude, res.shipments[0].longitude) == (33.0, -117.0)

@@ -21,7 +21,7 @@ from typing import Any
 
 from ortools.constraint_solver import routing_enums_pb2
 
-from routeopt.domain import SolverStats
+from routeopt.domain import N_DEPOTS, SolverStats
 from routeopt.solver.initial import greedy_routes
 from routeopt.solver.model_builder import BuiltModel, SolverInputs, build_model
 
@@ -54,16 +54,17 @@ REDUCTION_SHARE = 0.2
 
 @dataclass
 class RawRoute:
-    """One virtual vehicle's route: stop nodes in order plus solver times (seconds from shift start)."""
+    """One virtual vehicle's route: stop nodes in order plus solver times (seconds from settings.model_origin_s)."""
 
     vehicle: int
     truck_index: int
     slot: int
+    site: str
     nodes: list[int]
     arrivals: list[int]  # solver cumul (min) at each stop
     start_cumul: int
     end_cumul: int
-    break_start: int | None = None  # relative to shift start, if a break is performed
+    break_start: int | None = None  # solver time (from model_origin_s), if a break is performed
 
 
 @dataclass
@@ -159,6 +160,7 @@ def _extract_routes(
                 vehicle=v,
                 truck_index=slot.truck_index,
                 slot=slot.slot,
+                site=slot.site,
                 nodes=nodes,
                 arrivals=arrivals,
                 start_cumul=start_cumul,
@@ -166,7 +168,7 @@ def _extract_routes(
                 break_start=breaks.get(v),
             )
         )
-    dropped = [n for n in range(1, manager.GetNumberOfNodes()) if n not in visited]
+    dropped = [n for n in range(N_DEPOTS, manager.GetNumberOfNodes()) if n not in visited]
     return routes, dropped, deliv_starts
 
 
@@ -201,7 +203,9 @@ def solve(inputs: SolverInputs, use_initial: bool = True) -> SolveOutcome:
     initial_routes: list[list[int]] | None = None
     if use_initial:
         try:
-            initial_routes = greedy_routes(inputs.stops, inputs.matrix, settings, inputs.trucks)
+            initial_routes = greedy_routes(
+                inputs.stops, inputs.matrix, settings, inputs.trucks, built.slots
+            )
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("greedy initial solution failed: %s", exc)
     stage1 = budget * STAGE1_SHARE if reduce_fleet else budget
@@ -301,7 +305,9 @@ def solve_model(built: BuiltModel, inputs: SolverInputs, use_initial: bool = Tru
     t0 = time.perf_counter()
     initial_routes = None
     if use_initial:
-        initial_routes = greedy_routes(inputs.stops, inputs.matrix, inputs.settings, inputs.trucks)
+        initial_routes = greedy_routes(
+            inputs.stops, inputs.matrix, inputs.settings, inputs.trucks, built.slots
+        )
     assignment, initial_used = _search(
         built, initial_routes, float(inputs.settings.solve_time_seconds)
     )

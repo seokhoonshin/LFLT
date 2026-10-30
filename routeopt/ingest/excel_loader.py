@@ -36,6 +36,12 @@ CANONICAL_COLUMNS: list[str] = [
     "volume_cuft",
     "service_minutes",
     "notes",
+    "origin_dc",
+    "pallet_required",
+    "priority",
+    "memo",
+    "declared_value",
+    "bill_to_code",
 ]
 
 REQUIRED_COLUMNS: list[str] = [
@@ -47,10 +53,6 @@ REQUIRED_COLUMNS: list[str] = [
     "city",
     "state",
     "zip",
-    "pieces",
-    "service_minutes",
-    "model_code",
-    "weight_lb",
     "volume_cuft",
 ]
 
@@ -96,6 +98,30 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "install time",
     ],
     "notes": ["note", "comments", "remarks", "instructions", "delivery notes"],
+    "origin_dc": [
+        "dc",
+        "origin dc",
+        "origin",
+        "from dc",
+        "ship from",
+        "frst shpg loc cd",
+        "first shpg loc cd",
+        "warehouse",
+    ],
+    "pallet_required": [
+        "pallet",
+        "pallet required",
+        "pallet yn",
+        "needs pallet",
+        "pallet flag",
+        "hq",
+        "product group",
+        "prod group",
+    ],
+    "priority": ["prio", "priority group"],
+    "memo": ["memo text", "memo txt", "internal memo"],
+    "declared_value": ["declared val", "declared value", "dcld val", "dcld_val_dlr"],
+    "bill_to_code": ["bill to", "bill to code", "billto", "bill to cd", "bill_to_cd", "bill_to"],
 }
 
 

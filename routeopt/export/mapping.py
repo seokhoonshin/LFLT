@@ -8,7 +8,16 @@ import folium
 from folium.plugins import Fullscreen
 
 from routeopt.config import RunSettings
-from routeopt.domain import HUB_ADDRESS, HUB_LAT, HUB_LON, Plan, Stop, clock
+from routeopt.domain import (
+    DEFAULT_SITE,
+    HUB_LAT,
+    HUB_LON,
+    SITE_BY_CODE,
+    SITES,
+    Plan,
+    Stop,
+    clock,
+)
 
 Coord = tuple[float, float]
 GeometryFn = Callable[[list[Coord]], list[Coord] | None]
@@ -65,8 +74,14 @@ def build_map(
     stops: list[Stop],
     settings: RunSettings,
     geometry_fn: GeometryFn | None = None,
+    only: set[tuple[str, int]] | None = None,
 ) -> folium.Map:
-    """Return a folium map of the plan; ``geometry_fn`` supplies road polylines (OSRM)."""
+    """Return a folium map of the plan; ``geometry_fn`` supplies road polylines (OSRM).
+    ``only`` = {(truck number, load seq)} draws just those loads (no unassigned layer)."""
+
+    def shown(truck: str, seq: int) -> bool:
+        return only is None or (truck, seq) in only
+
     by_id = {s.stop_id: s for s in stops}
     colors = truck_colors(plan)
     m = folium.Map(
@@ -74,15 +89,25 @@ def build_map(
     )
     Fullscreen().add_to(m)
     points: list[Coord] = [(HUB_LAT, HUB_LON)]
-    folium.Marker(
-        [HUB_LAT, HUB_LON],
-        popup=f"<b>Hub</b><br/>{HUB_ADDRESS}",
-        tooltip="Hub",
-        icon=folium.Icon(color="black", icon="home", prefix="fa"),
-    ).add_to(m)
+    used_sites = {
+        load.site
+        for t in plan.trucks
+        for load in t.loads
+        if load.stops and shown(t.number, load.seq)
+    } or {DEFAULT_SITE}
+    for site in SITES:
+        if site.code not in used_sites:
+            continue
+        folium.Marker(
+            [site.lat, site.lon],
+            popup=f"<b>{site.name}</b><br/>{site.address}",
+            tooltip=f"Hub · {site.name}",
+            icon=folium.Icon(color="black", icon="home", prefix="fa"),
+        ).add_to(m)
+        points.append((site.lat, site.lon))
 
     for truck in plan.trucks:
-        loads = [load for load in truck.loads if load.stops]
+        loads = [load for load in truck.loads if load.stops and shown(truck.number, load.seq)]
         if not loads:
             continue
         color = colors[truck.number]
@@ -90,7 +115,8 @@ def build_map(
             name=f"{truck.number} – {truck.driver_name or 'no driver'}", show=True
         )
         for load in loads:
-            coords: list[Coord] = [(HUB_LAT, HUB_LON)]
+            depot = SITE_BY_CODE[load.site]
+            coords: list[Coord] = [(depot.lat, depot.lon)]
             for visit in load.stops:
                 stop = by_id.get(visit.stop_id)
                 if stop is None:
@@ -109,7 +135,7 @@ def build_map(
                     popup=folium.Popup(_popup(stop, visit.stop_id, extra), max_width=360),
                 ).add_to(group)
                 points.append((stop.latitude, stop.longitude))
-            coords.append((HUB_LAT, HUB_LON))
+            coords.append((depot.lat, depot.lon))
             line = geometry_fn(coords) if geometry_fn is not None else None
             folium.PolyLine(
                 line or coords,
@@ -117,11 +143,12 @@ def build_map(
                 weight=4 if load.seq == 1 else 3,
                 opacity=0.85,
                 dash_array=None if load.seq == 1 else "8,6",
-                tooltip=f"{truck.number} load {load.seq}: {clock(load.depart_s)}-{clock(load.return_s)}",
+                tooltip=f"{truck.number} load {load.seq} ({depot.name}): "
+                f"{clock(load.depart_s)}-{clock(load.return_s)}",
             ).add_to(group)
         group.add_to(m)
 
-    if plan.unassigned:
+    if plan.unassigned and only is None:
         group = folium.FeatureGroup(name="Unassigned", show=True)
         for u in plan.unassigned:
             stop = by_id.get(u.stop_id)
@@ -141,7 +168,7 @@ def build_map(
             ).add_to(group)
             points.append((stop.latitude, stop.longitude))
         group.add_to(m)
-    if plan.out_of_scope:
+    if plan.out_of_scope and only is None:
         group = folium.FeatureGroup(name="Not in scope", show=False)
         for u in plan.out_of_scope:
             stop = by_id.get(u.stop_id)
@@ -162,11 +189,15 @@ def build_map(
         f'<div><span style="display:inline-block;width:12px;height:12px;background:{colors[t.number]};'
         f'margin-right:6px;border-radius:2px"></span>{t.number} {t.driver_name}</div>'
         for t in plan.trucks
-        if t.used
+        if t.used and any(shown(t.number, ld.seq) for ld in t.loads if ld.stops)
     )
     legend_rows += (
-        '<div><span style="display:inline-block;width:12px;height:12px;background:#9e9e9e;'
-        'margin-right:6px;border-radius:6px"></span>Unassigned</div>'
+        ""
+        if only is not None
+        else (
+            '<div><span style="display:inline-block;width:12px;height:12px;background:#9e9e9e;'
+            'margin-right:6px;border-radius:6px"></span>Unassigned</div>'
+        )
     )
     legend = (
         '<div style="position:fixed;bottom:24px;left:12px;z-index:9999;background:white;'
@@ -186,7 +217,45 @@ def build_map(
 
 
 def map_html(
-    plan: Plan, stops: list[Stop], settings: RunSettings, geometry_fn: GeometryFn | None = None
+    plan: Plan,
+    stops: list[Stop],
+    settings: RunSettings,
+    geometry_fn: GeometryFn | None = None,
+    only: set[tuple[str, int]] | None = None,
 ) -> str:
     """The map as a standalone HTML document."""
-    return str(build_map(plan, stops, settings, geometry_fn).get_root().render())
+    return str(build_map(plan, stops, settings, geometry_fn, only).get_root().render())
+
+
+def load_map_html(
+    dc: str,
+    stops: list[tuple[float, float, str, str]],
+    geometry_fn: GeometryFn | None = None,
+    color: str = "#1f77b4",
+) -> str:
+    """One load on its own map: the warehouse, then ``stops`` in order as
+    (lat, lon, label, tooltip), and back; road lines when ``geometry_fn`` gives them."""
+    depot = SITE_BY_CODE.get(dc) or SITES[0]
+    m = folium.Map(location=[depot.lat, depot.lon], zoom_start=10, control_scale=True)
+    Fullscreen().add_to(m)
+    folium.Marker(
+        [depot.lat, depot.lon],
+        popup=f"<b>{depot.name}</b><br/>{depot.address}",
+        tooltip=f"1 · {depot.name} warehouse",
+        icon=folium.Icon(color="black", icon="home", prefix="fa"),
+    ).add_to(m)
+    coords: list[Coord] = [(depot.lat, depot.lon)]
+    for lat, lon, label, tip in stops:
+        folium.Marker([lat, lon], icon=_badge(label, color), tooltip=tip).add_to(m)
+        coords.append((lat, lon))
+    coords.append((depot.lat, depot.lon))
+    if len(coords) > 2:
+        line = geometry_fn(coords) if geometry_fn is not None else None
+        folium.PolyLine(line or coords, color=color, weight=4, opacity=0.85).add_to(m)
+        m.fit_bounds(
+            [
+                [min(p[0] for p in coords), min(p[1] for p in coords)],
+                [max(p[0] for p in coords), max(p[1] for p in coords)],
+            ]
+        )
+    return str(m.get_root().render())

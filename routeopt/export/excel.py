@@ -12,8 +12,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from routeopt.config import RunSettings
-from routeopt.domain import Plan, Stop, TruckConfig, seconds_to_time
+from routeopt.domain import SITE_BY_CODE, Plan, Stop, TruckConfig, seconds_to_time
 from routeopt.travel import FALLBACK_WARNING
+from routeopt.travel.tomtom import is_road_source, source_label
 
 TIME_FMT = "h:mm AM/PM"
 HEADER_FILL = PatternFill("solid", fgColor="DDE7F5")
@@ -46,6 +47,10 @@ ROUTES_COLUMNS = [
     "notes",
     "shipment_type",
     "stop_id",
+    "origin_dc",
+    "pallet_required",
+    "priority",
+    "appointment_contact",
 ]
 
 
@@ -123,7 +128,7 @@ def export_excel(
     ws = wb.active
     ws.title = "Summary"
     warnings = list(plan.warnings) + list(extra_warnings or [])
-    if plan.matrix_source != "osrm" and FALLBACK_WARNING not in warnings:
+    if not is_road_source(plan.matrix_source) and FALLBACK_WARNING not in warnings:
         warnings.insert(0, FALLBACK_WARNING)
     rows: list[tuple[str, Any]] = [
         ("Run", plan.run_id),
@@ -133,10 +138,8 @@ def export_excel(
         ("Created", plan.created_at.strftime("%Y-%m-%d %H:%M")),
         ("Source file", source_name),
         ("Preset", plan.settings.get("preset", "")),
-        (
-            "Travel times",
-            "OSRM road network" if plan.matrix_source == "osrm" else "ESTIMATED (straight-line)",
-        ),
+        ("Goal", plan.settings.get("goal", "")),
+        ("Travel times", source_label(plan.matrix_source)),
         ("", ""),
         ("Trucks used / selected", f"{k.trucks_used} / {k.trucks_selected}"),
         ("Loads", k.loads),
@@ -196,6 +199,18 @@ def export_excel(
     _kv_sheet(ws, rows)
 
     # ---- Routes (one row per shipment) --------------------------------------------
+    # ---- Load summary (TMS load-list layout) ----------------------------------------
+    from routeopt.export.load_summary import COLUMNS, TIME_COLUMNS, load_summary_rows
+
+    ws = wb.create_sheet("Load Summary")
+    summary_rows = load_summary_rows(plan, stops, settings)
+    _write_table(ws, COLUMNS, [[r[c] for c in COLUMNS] for r in summary_rows])
+    for c in TIME_COLUMNS:
+        col = COLUMNS.index(c) + 1
+        for r in range(2, ws.max_row + 1):
+            ws.cell(row=r, column=col).number_format = "m/d/yyyy h:mm"
+        ws.column_dimensions[get_column_letter(col)].width = 17
+
     ws = wb.create_sheet("Routes")
     route_rows: list[list[Any]] = []
     for truck in plan.trucks:
@@ -234,6 +249,10 @@ def export_excel(
                             sh.notes,
                             sh.shipment_type.value,
                             stop.stop_id,
+                            sh.origin_dc or SITE_BY_CODE[sh.site].dc_codes[0],
+                            "Y" if sh.pallet_required else "N",
+                            sh.priority,
+                            stop.contact,
                         ]
                     )
     _write_table(
@@ -259,7 +278,9 @@ def export_excel(
         "arrive",
         "depart",
         "travel_min_from_prev",
+        "stop_transit_min",
         "dist_mi_from_prev",
+        "stop_volume",
         "volume_on_arrival",
         "volume_after",
         "weight_after",
@@ -271,6 +292,9 @@ def export_excel(
         "tier",
         "day_tag",
         "shipments",
+        "dc",
+        "pallet_trip",
+        "appointment_contact",
     ]
     stop_rows: list[list[Any]] = []
     for truck in plan.trucks:
@@ -291,7 +315,9 @@ def export_excel(
                         _t(visit.arrive_s),
                         _t(visit.depart_s),
                         visit.travel_min_from_prev,
+                        visit.transit_min_from_prev,
                         visit.dist_mi_from_prev,
+                        round(visit.volume_on_arrival - visit.volume_after, 1),
                         visit.volume_on_arrival,
                         visit.volume_after,
                         visit.weight_after,
@@ -303,6 +329,9 @@ def export_excel(
                         stop.tier if stop else "",
                         stop.day_tag.value if stop else "",
                         len(stop.shipments) if stop else 0,
+                        SITE_BY_CODE[load.site].name,
+                        "Yes" if load.pallet else "",
+                        stop.contact if stop else "",
                     ]
                 )
     _write_table(
@@ -398,6 +427,7 @@ def export_excel(
         "loads",
         "stops",
         "on_duty_minutes",
+        "driver_start",
         "first_depart",
         "last_return",
         "lunch",
@@ -419,6 +449,7 @@ def export_excel(
                 len(loads),
                 sum(len(load.stops) for load in loads),
                 truck.on_duty_minutes,
+                _t(truck.start_s) if loads and truck.start_s is not None else None,
                 _t(loads[0].depart_s) if loads else None,
                 _t(loads[-1].return_s) if loads else None,
                 truck.lunch.where,
@@ -428,7 +459,7 @@ def export_excel(
                 round(sum(utils) / len(utils), 1) if utils else 0.0,
             ]
         )
-    _write_table(ws, truck_headers, truck_rows, {"first_depart", "last_return"})
+    _write_table(ws, truck_headers, truck_rows, {"driver_start", "first_depart", "last_return"})
 
     # ---- Settings ------------------------------------------------------------------------
     ws = wb.create_sheet("Settings")
