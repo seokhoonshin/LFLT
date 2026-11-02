@@ -196,6 +196,10 @@ def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
     db_env.save_aging(PERF_LEVEL, dt.date(2026, 11, 3), _perf_rows("2026-11-03"), "p.xlsx")
     at = _run("pages/7_Analyze.py")
     assert any(m.label == "Avg stops per load" for m in at.metric)
+    lift = next(m for m in at.metric if m.label.startswith("vs baseline"))
+    assert lift.value == "+75%"  # avg 3.0 stops vs 1.71
+    next(t for t in at.toggle if t.key == "perf-baseline-on").set_value(False).run()
+    assert not at.exception, at.exception
     for period in ("Day", "Week", "Year"):
         next(r for r in at.radio if r.key == "perf-period").set_value(period).run()
         assert not at.exception, at.exception

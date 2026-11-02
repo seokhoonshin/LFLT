@@ -172,7 +172,9 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    stops over any range of days, grouped by day, week, month or year.  *LFLT performance*:
    upload the LFLT performance query result (load level; uploads add up, the latest
    upload of a load wins) — average stops per load by day, week, month or year against a
-   target line (3 stops), with loads, share of loads at the target and volume per load.  *LFLT Aging*: upload the LFLT Aging summary query
+   target line (3 stops) and a baseline line (past performance, 1.71 stops; can be
+   switched off), with loads, share of loads at the target, volume per load and the change
+   against the baseline (e.g. +46%).  *LFLT Aging*: upload the LFLT Aging summary query
    result once a day (kept per AS_OF day): the day's two shared tables — PG30,50,80 Hold /
    Requested / Total by days in TMS (0d … 4d+) and PG20 by RDD passed / not passed, '-'
    for 0 — and a chart of how they moved over the days.

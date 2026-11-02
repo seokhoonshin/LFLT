@@ -43,6 +43,7 @@ OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
 STATUS_COLOR = {"Hold": "#2a78d6", "Requested": "#eb6834"}
 PERF_BAR = "#76b5ae"  # the teal of the shared performance chart
 PERF_TARGET = "#c0392b"
+PERF_BASELINE = "#6b6b66"  # the past performance: neutral, dashed
 BUCKET_BLUES = ["#cfe0f6", "#9cc1ec", "#6aa1e2", "#3b82d6", "#225fab", "#9a9a92"]
 
 st.title("Analyze")
@@ -268,7 +269,7 @@ def perf_view() -> None:
     if df.empty:
         st.info("No LFLT performance upload yet: run the LFLT performance query and upload it.")
         return
-    c1, c2, c3, c4 = st.columns([1.3, 1.2, 1.2, 0.8])
+    c1, c2, c3, c4, c5, c6 = st.columns([1.3, 1.2, 1.2, 0.7, 0.7, 0.7])
     period = c1.radio(
         "Group by", ["Day", "Week", "Month", "Year"], index=2, horizontal=True, key="perf-period"
     )
@@ -278,11 +279,25 @@ def perf_view() -> None:
     origins = sorted(set(df["ORIGIN"]) | {"LGC2", "LGC7", "LGC8"})
     pick = c3.multiselect("Origin", origins, default=origins, key="perf-org")
     target = c4.number_input("Target stops", 1.0, 20.0, 3.0, 0.5, key="perf-target")
+    baseline = c5.number_input(
+        "Baseline stops",
+        0.1,
+        20.0,
+        1.71,
+        0.01,
+        format="%.2f",
+        key="perf-baseline",
+        help="Stops per load before LFLT (the past performance), to compare against.",
+    )
+    c6.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
+    show_baseline = c6.toggle(
+        "Baseline", value=True, key="perf-baseline-on", help="Show the baseline line on the chart."
+    )
     cur = df[(df["DAY"] >= lo) & (df["DAY"] <= hi) & df["ORIGIN"].isin(pick)]
     if cur.empty:
         st.warning("No loads in this range.")
         return
-    k = st.columns(4)
+    k = st.columns(5)
     k[0].metric("Loads", f"{cur['LOAD_ID'].nunique():,}")
     k[1].metric(
         "Avg stops per load",
@@ -292,9 +307,16 @@ def perf_view() -> None:
     k[2].metric(f"Loads at {target:g}+ stops", f"{100 * (cur['STOPS'] >= target).mean():.0f}%")
     if "VOLUME" in cur:
         k[3].metric("Avg volume per load", f"{cur['VOLUME'].mean():,.0f} cu ft")
+    lift = (cur["STOPS"].mean() - baseline) / baseline
+    k[4].metric(
+        f"vs baseline {baseline:g} stops",
+        f"{lift:+.0%}",
+        f"{cur['STOPS'].mean() - baseline:+.2f} stops per load",
+        help="How much the average stops per load is above (or below) the baseline.",
+    )
     by = perf_by_period(cur, period, target)
     order = list(by["PERIOD"])
-    top = max(float(by["AVG_STOPS"].max()), target) * 1.2
+    top = max(float(by["AVG_STOPS"].max()), target, baseline) * 1.2
     bars = (
         alt.Chart(by)
         .mark_bar(
@@ -334,8 +356,21 @@ def perf_view() -> None:
         .mark_text(align="left", dx=4, dy=-7, color=PERF_TARGET, fontSize=11)
         .encode(y="y:Q", x=alt.value(0), text="t:N")
     )
+    layers = bars + labels + line + tag
+    if show_baseline:
+        base_line = (
+            alt.Chart(pd.DataFrame({"y": [baseline]}))
+            .mark_rule(color=PERF_BASELINE, strokeWidth=2, strokeDash=[6, 4])
+            .encode(y="y:Q")
+        )
+        base_tag = (
+            alt.Chart(pd.DataFrame({"y": [baseline], "t": [f"BASELINE ({baseline:g} stops)"]}))
+            .mark_text(align="left", dx=4, dy=-7, color=PERF_BASELINE, fontSize=11)
+            .encode(y="y:Q", x=alt.value(0), text="t:N")
+        )
+        layers = layers + base_line + base_tag
     st.markdown(f"##### LFLT — average stops per load by {period.lower()}")
-    st.altair_chart((bars + labels + line + tag).properties(height=360), use_container_width=True)
+    st.altair_chart(layers.properties(height=360), use_container_width=True)
     with st.expander("Table view"):
         show = by.drop(columns=["START"]).rename(
             columns={
