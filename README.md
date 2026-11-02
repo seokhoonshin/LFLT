@@ -165,7 +165,10 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    same pickup as the first row of every load.
 
 7. **Analyze** — dashboards.  *Appointment results*: confirmed / declined / open picked
-   stops over any range of days, grouped by day, week, month or year.  *Aging — load
+   stops over any range of days, grouped by day, week, month or year.  *LFLT performance*:
+   upload the LFLT performance query result (load level; uploads add up, the latest
+   upload of a load wins) — average stops per load by day, week, month or year against a
+   target line (3 stops), with loads, share of loads at the target and volume per load.  *Aging — load
    level* / *Aging — shipment level*: upload the Plan 7774 aging query result (load or
    shipment version; the level is detected) once a day; every snapshot day is kept.
    Per day: the Origin × Hold / Requested summary (loads, volume, order value), PG 20

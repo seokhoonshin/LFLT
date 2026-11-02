@@ -15,14 +15,18 @@ import pandas as pd
 import streamlit as st
 from routeopt.analyze import (
     DROP_BUCKETS,
+    PERF_LEVEL,
     RDD_BUCKETS,
     STATUSES,
     aging_pivot,
     daily_trend,
     detect_level,
     in_pg,
+    perf_by_period,
+    perf_frame,
     prepare,
     rdd_split,
+    read_perf,
     read_upload,
     snapshot_day,
     summary_table,
@@ -41,10 +45,15 @@ OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
 # categorical slots in fixed order (Hold, Requested); buckets: one hue, light -> dark
 STATUS_COLOR = {"Hold": "#2a78d6", "Requested": "#eb6834"}
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6"]
+PERF_BAR = "#76b5ae"  # the teal of the shared performance chart
+PERF_TARGET = "#c0392b"
 BUCKET_BLUES = ["#cfe0f6", "#9cc1ec", "#6aa1e2", "#3b82d6", "#225fab", "#9a9a92"]
 
 st.title("Analyze")
-st.caption("Dashboards: appointment results over time, and the Plan 7774 aging of open loads.")
+st.caption(
+    "Dashboards: appointment results over time, LFLT performance (stops per load) and the "
+    "Plan 7774 aging of open loads."
+)
 
 
 def is_reopt(r: dict) -> bool:
@@ -312,9 +321,131 @@ def aging_view(level: str) -> None:
                 st.rerun()
 
 
-tab_res, tab_load, tab_ship = st.tabs(
-    ["Appointment results", "Aging — load level", "Aging — shipment level"]
+def perf_view() -> None:
+    """LFLT performance: average stops per load by day / week / month / year vs target."""
+    up = st.file_uploader(
+        "Upload the LFLT performance query result (load level, .xlsx / .csv)",
+        type=["xlsx", "csv"],
+        key="up-perf",
+        help="Uploads add up: a load uploaded again is replaced by its latest values.",
+    )
+    if up is not None:
+        key = f"done-perf-{up.name}-{up.size}"
+        if not st.session_state.get(key):
+            try:
+                frame = read_perf(up.getvalue(), up.name)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                repo.save_aging(PERF_LEVEL, hub_today(), to_records(frame), up.name)
+                st.session_state[key] = True
+                st.success(f"Saved {len(frame)} loads.")
+    df = perf_frame(repo.load_aging(PERF_LEVEL))
+    if df.empty:
+        st.info("No LFLT performance upload yet: run the LFLT performance query and upload it.")
+        return
+    c1, c2, c3, c4 = st.columns([1.3, 1.2, 1.2, 0.8])
+    period = c1.radio(
+        "Group by", ["Day", "Week", "Month", "Year"], index=2, horizontal=True, key="perf-period"
+    )
+    first, last = min(df["DAY"]), max(df["DAY"])
+    span = c2.date_input("Days", (first, last), min_value=first, max_value=last, key="perf-span")
+    lo, hi = (span[0], span[-1]) if isinstance(span, tuple) and span else (first, last)
+    origins = sorted(set(df["ORIGIN"]) | {"LGC2", "LGC7", "LGC8"})
+    pick = c3.multiselect("Origin", origins, default=origins, key="perf-org")
+    target = c4.number_input("Target stops", 1.0, 20.0, 3.0, 0.5, key="perf-target")
+    cur = df[(df["DAY"] >= lo) & (df["DAY"] <= hi) & df["ORIGIN"].isin(pick)]
+    if cur.empty:
+        st.warning("No loads in this range.")
+        return
+    k = st.columns(4)
+    k[0].metric("Loads", f"{cur['LOAD_ID'].nunique():,}")
+    k[1].metric(
+        "Avg stops per load",
+        f"{cur['STOPS'].mean():.2f}",
+        f"{cur['STOPS'].mean() - target:+.2f} vs target",
+    )
+    k[2].metric(f"Loads at {target:g}+ stops", f"{100 * (cur['STOPS'] >= target).mean():.0f}%")
+    if "VOLUME" in cur:
+        k[3].metric("Avg volume per load", f"{cur['VOLUME'].mean():,.0f} cu ft")
+    by = perf_by_period(cur, period, target)
+    order = list(by["PERIOD"])
+    top = max(float(by["AVG_STOPS"].max()), target) * 1.2
+    bars = (
+        alt.Chart(by)
+        .mark_bar(
+            color=PERF_BAR,
+            size=40 if len(order) < 15 else 14,
+            cornerRadiusTopLeft=3,
+            cornerRadiusTopRight=3,
+        )
+        .encode(
+            x=alt.X("PERIOD:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y(
+                "AVG_STOPS:Q",
+                title="Avg stops per load",
+                scale=alt.Scale(domain=[0, top]),
+                axis=alt.Axis(grid=True),
+            ),
+            tooltip=[
+                alt.Tooltip("PERIOD:N", title=period),
+                alt.Tooltip("AVG_STOPS:Q", title="Avg stops / load", format=".2f"),
+                alt.Tooltip("LOADS:Q", title="Loads"),
+                alt.Tooltip("STOPS:Q", title="Stops"),
+                alt.Tooltip("AT_TARGET:Q", title=f"Loads at {target:g}+ stops", format=".0%"),
+                alt.Tooltip("AVG_VOLUME:Q", title="Avg cu ft / load", format=",.0f"),
+            ],
+        )
+    )
+    labels = bars.mark_text(dy=-8, color="#555", fontSize=11).encode(
+        text=alt.Text("AVG_STOPS:Q", format=".1f")
+    )
+    line = (
+        alt.Chart(pd.DataFrame({"y": [target]}))
+        .mark_rule(color=PERF_TARGET, strokeWidth=2)
+        .encode(y="y:Q")
+    )
+    tag = (
+        alt.Chart(pd.DataFrame({"y": [target], "t": [f"TARGET ({target:g} stops)"]}))
+        .mark_text(align="left", dx=4, dy=-7, color=PERF_TARGET, fontSize=11)
+        .encode(y="y:Q", x=alt.value(0), text="t:N")
+    )
+    st.markdown(f"##### LFLT — average stops per load by {period.lower()}")
+    st.altair_chart((bars + labels + line + tag).properties(height=360), use_container_width=True)
+    with st.expander("Table view"):
+        show = by.drop(columns=["START"]).rename(
+            columns={
+                "PERIOD": period,
+                "LOADS": "Loads",
+                "AVG_STOPS": "Avg stops / load",
+                "STOPS": "Stops",
+                "AT_TARGET": f"Loads at {target:g}+ stops",
+                "AVG_VOLUME": "Avg cu ft / load",
+            }
+        )
+        st.dataframe(
+            show.style.format(
+                {f"Loads at {target:g}+ stops": "{:.0%}", "Avg cu ft / load": "{:,.0f}"}
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+    with st.expander("Loads"):
+        st.dataframe(cur.drop(columns=["SNAPSHOT_DATE"]), hide_index=True, use_container_width=True)
+    with st.expander("Stored uploads"):
+        for d, n, name in repo.list_aging(PERF_LEVEL):
+            r1, r2 = st.columns([4, 1])
+            r1.write(f"{d:%a %Y-%m-%d} · {n} loads · {name}")
+            if r2.button("Delete", key=f"del-perf-{d}"):
+                repo.delete_aging(PERF_LEVEL, d)
+                st.rerun()
+
+
+tab_res, tab_perf, tab_load, tab_ship = st.tabs(
+    ["Appointment results", "LFLT performance", "Aging — load level", "Aging — shipment level"]
 )
+with tab_perf:
+    perf_view()
 with tab_res:
     appt_rows = repo.list_appointments()
     if not appt_rows:

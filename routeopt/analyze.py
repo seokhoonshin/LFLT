@@ -182,3 +182,71 @@ def daily_trend(df: pd.DataFrame, split: str, value: str = "VOLUME") -> pd.DataF
     g = df.groupby(["SNAPSHOT_DATE", split], observed=True)[value].sum().reset_index()
     g[split] = g[split].astype(str)
     return g
+
+
+# ---- LFLT performance (the load-level performance query) ---------------------------------
+PERF_REQUIRED = {"LOAD_ID", "STOPS"}
+PERF_LEVEL = "perf"  # stored with the aging snapshots, one upload per day
+
+
+def is_perf(df: pd.DataFrame) -> bool:
+    """The LFLT performance query result: loads with STOPS (and no aging columns)."""
+    return set(df.columns) >= PERF_REQUIRED and "LOAD_STATUS" not in df.columns
+
+
+def read_perf(data: bytes, name: str) -> pd.DataFrame:
+    if name.lower().endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(data))
+    else:
+        df = pd.read_excel(io.BytesIO(data))
+    df.columns = [str(c).strip().upper().replace(" ", "_") for c in df.columns]
+    if not is_perf(df):
+        raise ValueError(
+            "This is not the LFLT performance query result (needs LOAD_ID and STOPS columns)."
+        )
+    return df
+
+
+def perf_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """All uploads -> one row per load (the latest upload of a load wins), with the day it
+    counts on: shipped date, else pickup date."""
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # "19,007,709" (as copied from a grid) and 19007709 are the same load
+    df["LOAD_ID"] = df["LOAD_ID"].astype(str).str.replace(",", "", regex=False).str.strip()
+    df["LOAD_ID"] = df["LOAD_ID"].str.replace(r"\.0$", "", regex=True)
+    df = df.sort_values("SNAPSHOT_DATE").drop_duplicates("LOAD_ID", keep="last")
+    for c in ("STOPS", "SHIPMENTS", "VOLUME", "DISTANCE", "ORDER_VALUE"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    shipped = pd.to_datetime(df.get("SHIPPED_DATE"), errors="coerce")
+    pickup = pd.to_datetime(df.get("PICKUP_DATE"), errors="coerce")
+    day = shipped.fillna(pickup) if shipped is not None else pickup
+    df["DAY"] = day.dt.date
+    df["ORIGIN"] = df.get("ORIGIN", pd.Series([""] * len(df))).fillna("").astype(str)
+    return df[df["DAY"].notna() & df["STOPS"].notna()]
+
+
+def perf_by_period(df: pd.DataFrame, period: str, target: float = 3.0) -> pd.DataFrame:
+    """Per day / week / month / year: loads, average stops per load, share of loads at or
+    above the target, average volume."""
+    from routeopt.appointments import period_key
+
+    keys = [period_key(d, period) for d in df["DAY"]]
+    g = df.assign(START=[k[0] for k in keys], PERIOD=[k[1] for k in keys])
+    out = (
+        g.groupby(["START", "PERIOD"])
+        .agg(
+            LOADS=("LOAD_ID", "nunique"),
+            AVG_STOPS=("STOPS", "mean"),
+            STOPS=("STOPS", "sum"),
+            AT_TARGET=("STOPS", lambda s: float((s >= target).mean())),
+            AVG_VOLUME=("VOLUME", "mean") if "VOLUME" in g.columns else ("STOPS", "size"),
+        )
+        .reset_index()
+        .sort_values("START")
+    )
+    out["AVG_STOPS"] = out["AVG_STOPS"].round(2)
+    out["AVG_VOLUME"] = out["AVG_VOLUME"].round(0)
+    return out

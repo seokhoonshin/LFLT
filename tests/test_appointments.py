@@ -375,7 +375,7 @@ def test_period_key_groups_days_weeks_months_years() -> None:
     d = dt.date(2026, 11, 4)  # a Wednesday
     assert period_key(d, "Day") == (d, "11/04")
     assert period_key(d, "Week") == (dt.date(2026, 11, 2), "Wk 11/02")
-    assert period_key(d, "Month") == (dt.date(2026, 11, 1), "2026-11")
+    assert period_key(d, "Month") == (dt.date(2026, 11, 1), "Nov 2026")
     assert period_key(d, "Year") == (dt.date(2026, 1, 1), "2026")
 
 

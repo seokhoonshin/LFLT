@@ -176,3 +176,18 @@ def test_analyze_page_takes_both_uploads(db_env: Repository) -> None:
     assert not at.exception, at.exception
     assert len(at.dataframe) >= 4  # summary + two aging tables, both levels
     assert pd is not None and io is not None
+
+
+def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
+    import datetime as dt
+
+    from routeopt.analyze import PERF_LEVEL
+
+    from tests.test_analyze import _perf_rows
+
+    db_env.save_aging(PERF_LEVEL, dt.date(2026, 11, 3), _perf_rows("2026-11-03"), "p.xlsx")
+    at = _run("pages/7_Analyze.py")
+    assert any(m.label == "Avg stops per load" for m in at.metric)
+    for period in ("Day", "Week", "Year"):
+        next(r for r in at.radio if r.key == "perf-period").set_value(period).run()
+        assert not at.exception, at.exception

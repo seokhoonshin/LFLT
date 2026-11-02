@@ -103,3 +103,33 @@ def test_snapshots_are_kept_per_day_and_replaced(tmp_path) -> None:  # type: ign
     assert set(df["SNAPSHOT_DATE"]) == {d1, d2} and len(df) == 6
     repo.delete_aging("shipment", d1)
     assert [d for d, _n, _ in repo.list_aging("shipment")] == [d2]
+
+
+def _perf_rows(snapshot: str) -> list[dict]:
+    base = {"SNAPSHOT_DATE": snapshot, "ORIGIN": "LGC2", "VOLUME": 100.0}
+    return [
+        base | {"LOAD_ID": "19,007,709", "STOPS": 2, "SHIPPED_DATE": "2026-11-02"},
+        base
+        | {"LOAD_ID": "19,005,028", "STOPS": 4, "SHIPPED_DATE": "2026-11-02", "ORIGIN": "LGC7"},
+        base
+        | {"LOAD_ID": "19,010,000", "STOPS": 3, "SHIPPED_DATE": None, "PICKUP_DATE": "2026-11-09"},
+    ]
+
+
+def test_perf_average_stops_per_period_and_latest_upload_wins() -> None:
+    from routeopt.analyze import is_perf, perf_by_period, perf_frame
+
+    later = {"SNAPSHOT_DATE": "2026-11-04", "LOAD_ID": "19007709", "STOPS": 3,
+             "SHIPPED_DATE": "2026-11-02", "ORIGIN": "LGC2", "VOLUME": 100.0}  # fmt: skip
+    rows = [*_perf_rows("2026-11-03"), later]
+    df = perf_frame(rows)
+    assert len(df) == 3  # one row per load
+    assert df.set_index("LOAD_ID").loc["19007709", "STOPS"] == 3  # the later upload
+    assert df.set_index("LOAD_ID").loc["19010000", "DAY"] == dt.date(2026, 11, 9)  # pickup
+    day = perf_by_period(df, "Day").set_index("PERIOD")
+    assert day.loc["11/02", "LOADS"] == 2 and day.loc["11/02", "AVG_STOPS"] == 3.5
+    assert day.loc["11/02", "AT_TARGET"] == 1.0
+    month = perf_by_period(df, "Month").set_index("PERIOD")
+    assert month.loc["Nov 2026", "LOADS"] == 3 and month.loc["Nov 2026", "AVG_STOPS"] == 3.33
+    assert is_perf(pd.DataFrame(columns=["LOAD_ID", "STOPS"]))
+    assert not is_perf(pd.DataFrame(columns=["LOAD_ID", "STOPS", "LOAD_STATUS"]))

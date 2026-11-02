@@ -417,7 +417,7 @@ def period_key(day: dt.date, period: str) -> tuple[dt.date, str]:
         start = day - dt.timedelta(days=day.weekday())
         return start, f"Wk {start:%m/%d}"
     if period == "Month":
-        return day.replace(day=1), f"{day:%Y-%m}"
+        return day.replace(day=1), f"{day:%b %Y}"
     if period == "Year":
         return day.replace(month=1, day=1), f"{day:%Y}"
     return day, f"{day:%m/%d}"
