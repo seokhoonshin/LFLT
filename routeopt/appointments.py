@@ -15,7 +15,9 @@ from typing import Any
 
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 
-STATUSES = ["Not requested", "Requested", "Pending", "Confirmed", "Declined"]
+# in order of progress ("No response": requested, the customer has not answered); a stop
+# whose shipments differ shows the least advanced one
+STATUSES = ["Not requested", "Requested", "Pending", "No response", "Confirmed", "Declined"]
 # a stop's outcome: confirmed when every shipment is, declined (the customer can't take
 # it that day; dropped from the route) when any is, else still open
 OUTCOMES = ["Confirmed", "Declined", "Open"]

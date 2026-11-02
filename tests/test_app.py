@@ -132,6 +132,16 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     assert any(r["stage"] == "reoptimized" for r in after)
     assert any(r["status"] == "Declined" and r["stage"] != "reoptimized" for r in after)
     assert any("Re-optimized" in str(sv.value) for sv in ap.success)
+    # discard it: the button needs the confirmation first
+    discard = next(b for b in ap.button if b.label.startswith("Discard re-optimization"))
+    assert discard.disabled
+    next(c for c in ap.checkbox if c.label == "Yes, discard it").check().run()
+    next(b for b in ap.button if b.label.startswith("Discard re-optimization")).click().run()
+    assert not ap.exception, ap.exception
+    assert not any(r["stage"] == "reoptimized" for r in db_env.list_appointments())
+    reopt_again = next(b for b in ap.button if b.label.startswith("Re-optimize "))
+    reopt_again.click().run()  # it can be re-run afterwards
+    assert any(r["stage"] == "reoptimized" for r in db_env.list_appointments())
     # a map per load, and the finalized tab with load-ID search
     next(t for t in ap.toggle if t.label == "Map").set_value(True).run()
     assert not ap.exception, ap.exception

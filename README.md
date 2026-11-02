@@ -146,14 +146,15 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    stop (shipments to one stop merged; *By shipment* lists them one by one): load ID ·
    Stop · date · APPT time · APPT # · Customer · Address · Volume · Miles from prev · POC ·
    Note · Shipments · Shipment IDs · Status.  load ID, stop order, APPT time, APPT #, note
-   and status (Not requested / Requested / Pending / Confirmed / Declined) are editable;
+   and status (Not requested / Requested / Pending / No response / Confirmed / Declined) are editable;
    press **Save**.  Download one load or every load of the day as Excel (load ID … Note;
    declined stops left out).  Two tabs: **Original** (the trucks as picked — the record,
    declined stops included) and **Re-optimized**: *Re-optimize … without declined stops*
    re-plans the picked trucks with the declined stops left out, every other stop kept on
    its truck and the run's other candidates (from the original upload) filling the room;
    it is saved as a new version of the run.  A status set in either tab applies to the
-   same shipment in the other.  *Add a stop … by hand*: type a shipment ID and the whole
+   same shipment in the other.  *Discard the re-optimization* removes a run's
+   Re-optimized set (after a confirmation) when the re-plan will not be run.  *Add a stop … by hand*: type a shipment ID and the whole
    stop it belongs to (every shipment at that address in the upload, details copied) is
    added as the load's last stop; a shipment not in the upload can be typed in.
    *Results so far* shows the confirmed / declined share over any range of days, grouped

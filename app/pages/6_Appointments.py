@@ -418,7 +418,8 @@ def render(stage_rows: list[dict], stage: str) -> None:
                         "Status": st.column_config.SelectboxColumn(
                             "Status",
                             options=STATUSES,
-                            help="Declined = the customer can't take it that day (dropped).",
+                            help="No response = requested, no answer yet (still open). "
+                            "Declined = the customer can't take it that day (dropped).",
                         ),
                     },
                     key=f"ed-{stage}-{view}-{run_id}-{truck}-{load_seq}",
@@ -554,6 +555,28 @@ with tab_reopt:
             "The re-plan without the declined stops. A status set here is also set on the "
             "same shipment in the Original tab."
         )
+        for rid in sorted({r["run_id"] for r in day_reopt}):
+            with st.expander(f"Discard the re-optimization of {rid}"):
+                new_only = {r["shipment_id"] for r in day_reopt if r["run_id"] == rid} - {
+                    r["shipment_id"] for r in rows if r["run_id"] == rid and not is_reopt(r)
+                }
+                st.caption(
+                    "For a re-plan you will not run: removes this run's Re-optimized set. The "
+                    "Original tab stays as it is (statuses already set there are kept)."
+                    + (
+                        f" {len(new_only)} shipment(s) that only the re-plan added lose their "
+                        "status."
+                        if new_only
+                        else ""
+                    )
+                )
+                sure = st.checkbox("Yes, discard it", key=f"discard-ok-{rid}")
+                if st.button(
+                    f"Discard re-optimization of {rid}", key=f"discard-{rid}", disabled=not sure
+                ):
+                    n = repo.delete_reoptimized(rid)
+                    st.toast(f"Re-optimization of {rid} discarded ({n} rows).")
+                    st.rerun()
         render(day_reopt, "reoptimized")
 with tab_final:
     st.caption(

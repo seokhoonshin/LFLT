@@ -704,6 +704,17 @@ class Repository:
                 ).scalars()
             )
 
+    def delete_reoptimized(self, run_id: str) -> int:
+        """Drop a run's Re-optimized set (the original set and the saved plan versions stay).
+        Returns the rows removed."""
+        with self._sf() as session, session.begin():
+            result = session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.run_id == run_id, AppointmentRow.stage == "reoptimized"
+                )
+            )
+            return int(result.rowcount or 0)
+
     def add_appointments(self, rows: list[dict[str, Any]]) -> int:
         """Insert appointment rows (a stop added by hand); returns how many."""
         with self._sf() as session, session.begin():

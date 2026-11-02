@@ -418,3 +418,27 @@ def test_export_puts_the_pickup_on_the_warehouse_row() -> None:
     ws = load_workbook(io.BytesIO(data)).active
     header = [c.value for c in ws[1]]
     assert ws.cell(2, header.index("APPT time") + 1).value == "7:30 AM"
+
+
+def test_discarding_a_reoptimization_keeps_the_original(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    plan, stops, _s = _plan(tmp_path)
+    truck = next(t for t in plan.trucks if any(load.stops for load in t.loads))
+    rows = appointment_rows(plan, stops, truck.number)
+    repo = Repository(f"sqlite:///{tmp_path / 'd.db'}")
+    repo.init_schema()
+    repo.select_truck_for_appointments(rows)
+    repo.save_reoptimized(plan.run_id, rows)
+    assert sum(r["stage"] == "reoptimized" for r in repo.list_appointments()) == len(rows)
+    assert repo.delete_reoptimized(plan.run_id) == len(rows)
+    left = repo.list_appointments()
+    assert len(left) == len(rows) and all(r["stage"] != "reoptimized" for r in left)
+    assert repo.selected_trucks(plan.run_id) == {truck.number}
+
+
+def test_no_response_is_a_status_and_counts_as_open() -> None:
+    from routeopt.appointments import STATUSES, stop_outcome, stop_status
+
+    assert "No response" in STATUSES
+    assert STATUSES.index("Pending") < STATUSES.index("No response") < STATUSES.index("Confirmed")
+    assert stop_outcome(["No response"]) == "Open"
+    assert stop_status(["Confirmed", "No response"]) == "No response"  # not every one confirmed
