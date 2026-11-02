@@ -132,6 +132,13 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
     assert any(r["stage"] == "reoptimized" for r in after)
     assert any(r["status"] == "Declined" and r["stage"] != "reoptimized" for r in after)
     assert any("Re-optimized" in str(sv.value) for sv in ap.success)
+    # take one stop out of the re-plan
+    before = sum(r["stage"] == "reoptimized" for r in db_env.list_appointments())
+    pick = next(m for m in ap.multiselect if m.label == "Stops to remove")
+    pick.set_value([pick.options[0]]).run()
+    next(b for b in ap.button if b.label == "Remove 1 stop(s)").click().run()
+    assert not ap.exception, ap.exception
+    assert sum(r["stage"] == "reoptimized" for r in db_env.list_appointments()) < before
     # discard it: the button needs the confirmation first
     discard = next(b for b in ap.button if b.label.startswith("Discard re-optimization"))
     assert discard.disabled

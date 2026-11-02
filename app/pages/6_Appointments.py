@@ -20,6 +20,7 @@ from routeopt.appointments import (
     EXPORT_COLUMNS,
     STATUSES,
     appointment_rows,
+    ceil_half_hour,
     clock_seconds,
     export_stops_by_load,
     finalized_rows,
@@ -94,20 +95,21 @@ if by_stop:
 
 def run_travel(run_id: str):  # type: ignore[no-untyped-def]
     """The run's planning travel times (traffic factor applied), its node index per stop
-    and the earliest load-1 pickup (DC opening + loading, e.g. 7:30)."""
+    and the earliest load-1 pickup (the DC opening, 6:00)."""
     cache: dict = st.session_state.setdefault("run_travel", {})
     if run_id not in cache:
         rec = load_record(run_id)
         matrix = planning_matrix(rec.matrix, rec.settings)
         node = {s.stop_id: i + N_DEPOTS for i, s in enumerate(rec.stops)}
-        earliest = rec.settings.earliest_shift_start_s + rec.settings.first_load_seconds
+        earliest = rec.settings.earliest_shift_start_s
         cache[run_id] = (matrix, node, earliest)
     return cache[run_id]
 
 
 def pickups_for(stage_rows: list[dict]) -> dict[tuple[str, str, int], str]:
     """Warehouse pickup per load ("HH:MM"): the first live stop's APPT time (else its plan
-    ETA) minus the drive from the DC; load 1 never before DC opening + loading."""
+    ETA rounded up to the half hour) minus the drive from the DC minus an hour of loading;
+    load 1 never before the DC opens (6:00)."""
     out: dict[tuple[str, str, int], str] = {}
     firsts: dict[tuple[str, str, int], dict] = {}
     for s in group_by_stop(stage_rows):
@@ -124,7 +126,9 @@ def pickups_for(stage_rows: list[dict]) -> dict[tuple[str, str, int], str]:
         drive = None
         if s["stop_id"] in node and s["dc"] in SITE_NODE:
             drive = matrix.duration(SITE_NODE[s["dc"]], node[s["stop_id"]])
-        first = clock_seconds(s.get("appt_time")) or clock_seconds(s.get("eta"))
+        first = clock_seconds(s.get("appt_time"))
+        if first is None and clock_seconds(s.get("eta")) is not None:
+            first = ceil_half_hour(clock_seconds(s.get("eta")))  # the plan ETA, rounded up
         pick = pickup_seconds(first, drive, earliest if key[2] == 1 else 0)
         if pick is not None:
             out[key] = f"{pick // 3600:02d}:{pick % 3600 // 60:02d}"
@@ -345,6 +349,29 @@ def load_tools(
             load_map(run_id, [r for r in items if r["load_seq"] == load_seq])
 
 
+def remove_form(run_id: str, truck: str, items: list[dict]) -> None:
+    """Take stops out of the re-plan (the Original tab keeps them as the record)."""
+    stops = [s for s in group_by_stop(items) if s["stop_seq"] < 900]
+    labels = {
+        f"Load {s['load_seq']} · stop {s['stop_seq'] + 1} · {s['customer']} "
+        f"({s['shipments']} shipment(s))": s["ids"]
+        for s in stops
+    }
+    st.caption(
+        "Removes the chosen stops from the Re-optimized tab only; the Original tab and its "
+        "statuses stay as they are. Stop numbers are re-counted in the exports."
+    )
+    chosen = st.multiselect("Stops to remove", list(labels), key=f"rm-stops-{run_id}-{truck}")
+    if st.button(
+        f"Remove {len(chosen)} stop(s)",
+        key=f"rm-stops-btn-{run_id}-{truck}",
+        disabled=not chosen,
+    ):
+        n = repo.delete_appointment_rows([i for c in chosen for i in labels[c]])
+        st.toast(f"{truck}: {len(chosen)} stop(s) removed from the re-plan ({n} shipment rows).")
+        st.rerun()
+
+
 def render(stage_rows: list[dict], stage: str) -> None:
     """Metrics, downloads and the editable tables of one set (original / re-optimized)."""
     pickups = pickups_for(stage_rows)
@@ -456,6 +483,9 @@ def render(stage_rows: list[dict], stage: str) -> None:
         load_tools(stage, stage_rows, run_id, truck, items, load_seqs)
         with st.expander(f"Add a stop to {truck} by hand"):
             add_form(stage, run_id, truck, items, load_seqs)
+        if stage == "reoptimized":
+            with st.expander(f"Remove stops from {truck} (re-plan only)"):
+                remove_form(run_id, truck, items)
         if stage != "original":
             continue
         with st.expander(f"Remove {truck} from Appointments"):

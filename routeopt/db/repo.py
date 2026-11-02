@@ -715,6 +715,19 @@ class Repository:
             )
             return int(result.rowcount or 0)
 
+    def delete_appointment_rows(self, ids: list[int], stage: str = "reoptimized") -> int:
+        """Remove rows of one stage by id (used to take stops out of a re-plan; the
+        original set is the record and is never edited this way).  Returns rows removed."""
+        if not ids:
+            return 0
+        with self._sf() as session, session.begin():
+            result = session.execute(
+                delete(AppointmentRow).where(
+                    AppointmentRow.id.in_([int(i) for i in ids]), AppointmentRow.stage == stage
+                )
+            )
+            return int(result.rowcount or 0)
+
     def add_appointments(self, rows: list[dict[str, Any]]) -> int:
         """Insert appointment rows (a stop added by hand); returns how many."""
         with self._sf() as session, session.begin():

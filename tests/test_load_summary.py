@@ -71,6 +71,7 @@ def test_results_load_table_starts_with_the_warehouse_pickup(tmp_path) -> None: 
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+    from routeopt.appointments import ceil_half_hour
     from routeopt.domain import clock
 
     from _common import load_table
@@ -82,3 +83,9 @@ def test_results_load_table_starts_with_the_warehouse_pickup(tmp_path) -> None: 
     first = df.iloc[0]
     assert first["#"] == "DC" and first["Depart"] == clock(load.depart_s)
     assert "warehouse pickup" in first["Customer"] and len(df) == len(load.stops) + 1
+    # ETAs rounded up to the half hour; the DC row = first ETA - drive - 1 h, not before 6:00
+    v = load.stops[0]
+    eta = ceil_half_hour(v.arrive_s)
+    assert df.iloc[1]["ETA"] == clock(eta)
+    want = max(6 * 3600, eta - round(v.travel_min_from_prev * 60) - 3600)
+    assert first["ETA"] == clock(want)

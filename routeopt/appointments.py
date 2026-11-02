@@ -452,10 +452,19 @@ def clock_seconds(text: str | None) -> int | None:
     return None
 
 
+PICKUP_LOADING_S = 3600  # the truck is at the warehouse this long before it leaves
+
+
+def ceil_half_hour(seconds: int) -> int:
+    """Round a time up (never down) to the next half hour: 8:39 -> 9:00, 12:19 -> 12:30,
+    11:11 -> 11:30, 11:32 -> 12:00; 8:00 and 9:30 stay."""
+    return -(-int(seconds) // 1800) * 1800
+
+
 def pickup_seconds(first_stop_s: int | None, drive_s: int | None, earliest_s: int) -> int | None:
-    """When the loaded truck must leave the warehouse to reach the first stop at
-    ``first_stop_s``: worked back by the drive, never before ``earliest_s`` (DC opening +
-    loading, e.g. 6:00 + 1:30 = 7:30)."""
+    """Warehouse pickup time: the first stop's time minus the drive from the DC minus an
+    hour of loading (8:00 appointment, 30 min away -> 6:30), never before ``earliest_s``
+    (the DC opening, 6:00)."""
     if first_stop_s is None or drive_s is None:
         return None
-    return max(earliest_s, first_stop_s - drive_s)
+    return max(earliest_s, first_stop_s - drive_s - PICKUP_LOADING_S)

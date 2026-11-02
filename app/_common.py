@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from routeopt.appointments import ceil_half_hour, pickup_seconds
 from routeopt.config import AppConfig, RunSettings
 from routeopt.db.repo import Repository, RunRecord
 from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock, hub_today
@@ -142,13 +143,19 @@ def load_table(
     truck = plan.truck(truck_number)
     load = next(load for load in truck.loads if load.seq == load_seq)
     site = SITE_BY_CODE.get(load.site)
-    # first row: the warehouse pickup = when the loaded truck leaves the DC (the driver's
-    # start + loading, worked back from the first appointment; never before DC opening +
-    # loading)
+    settings = settings_from_plan(plan)
+    # first row: the warehouse pickup = the first stop's ETA (rounded up to the half hour)
+    # minus the drive minus an hour of loading; load 1 never before the DC opens
+    first = load.stops[0] if load.stops else None
+    pickup = None
+    if first is not None:
+        earliest = settings.earliest_shift_start_s if load.seq == 1 else 0
+        drive_s = round(first.travel_min_from_prev * 60)
+        pickup = pickup_seconds(ceil_half_hour(first.arrive_s), drive_s, earliest)
     rows: list[dict[str, Any]] = [
         {
             "#": "DC",
-            "ETA": "",
+            "ETA": clock(pickup) if pickup is not None else "",
             "Window": "",
             "Customer": f"{load.site} warehouse pickup",
             "Address": site.address if site else "",
@@ -170,7 +177,7 @@ def load_table(
         rows.append(
             {
                 "#": str(v.seq),
-                "ETA": clock(v.arrive_s),
+                "ETA": clock(ceil_half_hour(v.arrive_s)),  # rounded up to the half hour
                 "Window": f"{clock(v.eta_window_start_s)} – {clock(v.eta_window_end_s)}",
                 "Customer": s.customer_label if s else v.stop_id,
                 "Address": f"{s.address}, {s.city} {s.zip}" if s else "",

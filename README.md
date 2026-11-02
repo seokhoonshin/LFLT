@@ -161,9 +161,12 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    by day, week, month or year.  A third tab, **Finalized**, keeps the confirmed stops of
    both tabs (the loads that go; read-only; a shipment in both counts once) and finds a load by its load ID.
    Every load in the three tabs has a **Map** toggle.  The warehouse row's APPT time is
-   the **pickup**: the first stop's APPT time (else its ETA) minus the drive from the DC,
-   never before DC opening + loading (6:00 + 1:30 = 7:30) on load 1; Results shows the
-   same pickup as the first row of every load.
+   the **pickup**: the first stop's APPT time (else its ETA rounded up to the half hour)
+   minus the drive from the DC minus an hour of loading (8:00 appointment 30 min away ->
+   6:30), never before the DC opens (6:00) on load 1; Results shows the same pickup as the
+   first row of every load, and its stop ETAs rounded up to the half hour (8:39 -> 9:00,
+   11:11 -> 11:30, 11:32 -> 12:00).  In the Re-optimized tab, stops can be taken out of
+   the re-plan (*Remove stops … (re-plan only)*).
 
 7. **Analyze** — dashboards.  *Appointment results*: confirmed / declined / open picked
    stops over any range of days, grouped by day, week, month or year.  *LFLT performance*:

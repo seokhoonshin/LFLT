@@ -395,17 +395,25 @@ def test_load_map_html_draws_the_warehouse_and_the_stops() -> None:
 
 
 def test_pickup_is_worked_back_from_the_first_appointment() -> None:
-    from routeopt.appointments import clock_seconds, pickup_seconds, time_text
+    from routeopt.appointments import ceil_half_hour, clock_seconds, pickup_seconds, time_text
 
     assert clock_seconds("10:00") == 36000 and clock_seconds("8:32 AM") == 8 * 3600 + 32 * 60
     assert clock_seconds("1:05 PM") == 13 * 3600 + 300 and clock_seconds("") is None
-    earliest = 7 * 3600 + 1800  # 6:00 opening + 90 min loading
-    # first appointment 10:00, 45 min from the DC -> leave 9:15
-    assert pickup_seconds(36000, 45 * 60, earliest) == 9 * 3600 + 15 * 60
-    # an 8:00 first stop 60 min away cannot be met before the DC opens -> 7:30
-    assert pickup_seconds(8 * 3600, 3600, earliest) == earliest
-    assert pickup_seconds(None, 600, earliest) is None
+    opens = 6 * 3600
+    # 8:00 appointment, 30 min from the DC, an hour of loading -> 6:30
+    assert pickup_seconds(8 * 3600, 30 * 60, opens) == 6 * 3600 + 30 * 60
+    # 10:00, 45 min away -> 8:15
+    assert pickup_seconds(36000, 45 * 60, opens) == 8 * 3600 + 15 * 60
+    # an 8:00 first stop 90 min away would need 5:30 -> the DC opens at 6:00
+    assert pickup_seconds(8 * 3600, 90 * 60, opens) == opens
+    assert pickup_seconds(None, 600, opens) is None
     assert time_text("07:30") == "7:30 AM" and time_text("13:05") == "1:05 PM"
+    # ETAs are rounded up to the half hour, never down
+    hm = lambda h, m: h * 3600 + m * 60  # noqa: E731
+    assert ceil_half_hour(hm(8, 39)) == hm(9, 0) and ceil_half_hour(hm(9, 49)) == hm(10, 0)
+    assert ceil_half_hour(hm(12, 19)) == hm(12, 30) and ceil_half_hour(hm(11, 11)) == hm(11, 30)
+    assert ceil_half_hour(hm(11, 32)) == hm(12, 0) and ceil_half_hour(hm(8, 0)) == hm(8, 0)
+    assert ceil_half_hour(hm(9, 30)) == hm(9, 30)
 
 
 def test_export_puts_the_pickup_on_the_warehouse_row() -> None:
@@ -442,3 +450,20 @@ def test_no_response_is_a_status_and_counts_as_open() -> None:
     assert STATUSES.index("Pending") < STATUSES.index("No response") < STATUSES.index("Confirmed")
     assert stop_outcome(["No response"]) == "Open"
     assert stop_status(["Confirmed", "No response"]) == "No response"  # not every one confirmed
+
+
+def test_stops_can_be_taken_out_of_the_replan_only(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    plan, stops, _s = _plan(tmp_path)
+    truck = next(t for t in plan.trucks if any(load.stops for load in t.loads))
+    rows = appointment_rows(plan, stops, truck.number)
+    repo = Repository(f"sqlite:///{tmp_path / 'r.db'}")
+    repo.init_schema()
+    repo.select_truck_for_appointments(rows)
+    repo.save_reoptimized(plan.run_id, rows)
+    listed = repo.list_appointments()
+    reopt_ids = [r["id"] for r in listed if r["stage"] == "reoptimized"][:1]
+    orig_ids = [r["id"] for r in listed if r["stage"] != "reoptimized"][:1]
+    assert repo.delete_appointment_rows(orig_ids) == 0  # the original is never edited so
+    assert repo.delete_appointment_rows(reopt_ids) == 1
+    left = repo.list_appointments()
+    assert len(left) == len(listed) - 1 and all(r["id"] not in reopt_ids for r in left)
