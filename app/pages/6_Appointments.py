@@ -557,9 +557,9 @@ with tab_reopt:
         render(day_reopt, "reoptimized")
 with tab_final:
     st.caption(
-        "The loads that go: the latest set (Re-optimized if there is one, else Original) "
-        "with only the stops whose every shipment is **Confirmed**. Change statuses in the "
-        "other tabs; this one is read-only."
+        "The loads that go: every stop whose every shipment is **Confirmed**, from the "
+        "Re-optimized tab and the Original tab (a shipment in both counts once). Change "
+        "statuses in the other tabs; this one is read-only."
     )
     wanted = st.text_input(
         "Find a load by load ID",

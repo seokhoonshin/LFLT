@@ -391,24 +391,37 @@ def manual_rows(
 
 
 def finalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The loads that go: per run the latest set (re-optimized if there is one, else the
-    original), keeping only the stops whose every shipment is Confirmed."""
-    reopt_runs = {r["run_id"] for r in rows if r.get("stage") == "reoptimized"}
-    current = [
-        r
-        for r in rows
-        if (r.get("stage") == "reoptimized") == (r["run_id"] in reopt_runs) and r["stop_seq"] < 900
-    ]
+    """The loads that go: every stop whose every shipment is Confirmed, from the
+    re-optimized set and from the original one.  For a run with a re-plan, a shipment
+    that is in both counts once (the re-plan's row); an original-only one (e.g. a stop
+    added by hand after the re-plan) joins its truck's load at the end."""
+    reopt = [r for r in rows if r.get("stage") == "reoptimized" and r["stop_seq"] < 900]
+    in_reopt = {(r["run_id"], r["shipment_id"]) for r in reopt}
+    reopt_version = {}
+    for r in reopt:
+        reopt_version[r["run_id"]] = max(reopt_version.get(r["run_id"], 0), r["version"])
+    current = list(reopt)
+    for r in rows:
+        if r.get("stage") == "reoptimized" or r["stop_seq"] >= 900:
+            continue
+        if (r["run_id"], r["shipment_id"]) in in_reopt:
+            continue
+        if r["run_id"] in reopt_version:  # shown with the re-plan, after its stops
+            r = {**r, "version": reopt_version[r["run_id"]], "stop_seq": 100 + r["stop_seq"]}
+        current.append(r)
     statuses: dict[tuple[Any, ...], list[str]] = {}
     for r in current:
         key = (r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])
         statuses.setdefault(key, []).append(r["status"])
-    return [
+    final = [
         {**r, "stage": "finalized"}
         for r in current
         if stop_outcome(statuses[(r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])])
         == "Confirmed"
     ]
+    return sorted(
+        final, key=lambda r: (r["run_id"], r["truck"], r["load_seq"], r["stop_seq"], r["id"])
+    )
 
 
 def period_key(day: dt.date, period: str) -> tuple[dt.date, str]:

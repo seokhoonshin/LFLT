@@ -349,7 +349,7 @@ def test_manual_rows_add_the_whole_stop_as_the_last_stop(tmp_path) -> None:  # t
     assert {r["shipment_id"] for r in repo.list_appointments()} == {"X11", "X22", "NOPE123"}
 
 
-def test_finalized_keeps_only_confirmed_stops_of_the_latest_set() -> None:
+def test_finalized_keeps_the_confirmed_stops_of_both_sets() -> None:
     from routeopt.appointments import finalized_rows
 
     rows = _rows_for_export()  # stop 1 confirmed (2 shipments), 2 declined, 3 requested
@@ -360,11 +360,19 @@ def test_finalized_keeps_only_confirmed_stops_of_the_latest_set() -> None:
     half = [dict(r) for r in rows]
     half[1]["status"] = "Pending"
     assert finalized_rows(half) == []
-    # with a re-plan, the re-plan is the set that goes
-    reopt = [{**r, "id": 100 + r["id"], "stage": "reoptimized"} for r in rows if r["id"] in (1, 4)]
+    # with a re-plan: its confirmed stops, plus confirmed shipments only in the original
+    reopt = [{**r, "id": 100 + r["id"], "stage": "reoptimized", "version": 1}
+             for r in rows if r["id"] in (1, 4)]  # fmt: skip
     reopt[1]["status"] = "Confirmed"
     final2 = finalized_rows(rows + reopt)
-    assert {r["shipment_id"] for r in final2} == {"a1", "c1"}
+    assert sorted(r["shipment_id"] for r in final2) == ["a1", "a2", "c1"]  # each once
+    a1 = next(r for r in final2 if r["shipment_id"] == "a1")
+    assert a1["id"] == 101  # the re-plan's row
+    a2 = next(r for r in final2 if r["shipment_id"] == "a2")
+    assert a2["version"] == 1 and a2["stop_seq"] > max(r["stop_seq"] for r in reopt)
+    # a stop added by hand in the original after the re-plan, then confirmed
+    manual = {**rows[3], "id": 9, "shipment_id": "m1", "stop_seq": 7, "status": "Confirmed"}
+    assert "m1" in {r["shipment_id"] for r in finalized_rows([*rows, *reopt, manual])}
 
 
 def test_period_key_groups_days_weeks_months_years() -> None:

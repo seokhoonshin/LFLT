@@ -157,8 +157,8 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    stop it belongs to (every shipment at that address in the upload, details copied) is
    added as the load's last stop; a shipment not in the upload can be typed in.
    *Results so far* shows the confirmed / declined share over any range of days, grouped
-   by day, week, month or year.  A third tab, **Finalized**, keeps only the confirmed stops
-   of the latest set (the loads that go; read-only) and finds a load by its load ID.
+   by day, week, month or year.  A third tab, **Finalized**, keeps the confirmed stops of
+   both tabs (the loads that go; read-only; a shipment in both counts once) and finds a load by its load ID.
    Every load in the three tabs has a **Map** toggle.  The warehouse row's APPT time is
    the **pickup**: the first stop's APPT time (else its ETA) minus the drive from the DC,
    never before DC opening + loading (6:00 + 1:30 = 7:30) on load 1; Results shows the
