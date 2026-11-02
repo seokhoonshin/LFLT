@@ -14,22 +14,19 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from routeopt.analyze import (
-    DROP_BUCKETS,
+    AGING_LEVEL,
+    DAY_COLS,
+    DAY_LABELS,
     PERF_LEVEL,
-    RDD_BUCKETS,
-    STATUSES,
-    aging_pivot,
-    daily_trend,
-    detect_level,
-    in_pg,
+    RDD_COLS,
+    RDD_LABELS,
+    aging_frame,
+    aging_table,
+    dash,
     perf_by_period,
     perf_frame,
-    prepare,
-    rdd_split,
+    read_aging_summary,
     read_perf,
-    read_upload,
-    snapshot_day,
-    summary_table,
     to_records,
 )
 from routeopt.appointments import OUTCOMES, outcome_summary, period_key, stop_outcomes
@@ -44,7 +41,6 @@ OUTCOME_COLOR = {"Confirmed": "#0ca30c", "Declined": "#d03b3b", "Open": "#9a9a92
 OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
 # categorical slots in fixed order (Hold, Requested); buckets: one hue, light -> dark
 STATUS_COLOR = {"Hold": "#2a78d6", "Requested": "#eb6834"}
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6"]
 PERF_BAR = "#76b5ae"  # the teal of the shared performance chart
 PERF_TARGET = "#c0392b"
 BUCKET_BLUES = ["#cfe0f6", "#9cc1ec", "#6aa1e2", "#3b82d6", "#225fab", "#9a9a92"]
@@ -52,7 +48,7 @@ BUCKET_BLUES = ["#cfe0f6", "#9cc1ec", "#6aa1e2", "#3b82d6", "#225fab", "#9a9a92"
 st.title("Analyze")
 st.caption(
     "Dashboards: appointment results over time, LFLT performance (stops per load) and the "
-    "Plan 7774 aging of open loads."
+    "LFLT aging of the open Plan 7774 loads."
 )
 
 
@@ -153,171 +149,99 @@ def appointment_results(rows: list[dict]) -> None:
             st.dataframe(table, use_container_width=True)
 
 
-# ---- aging --------------------------------------------------------------------------------
-def money(v: float) -> str:
-    return f"${v:,.0f}"
-
-
-def show_table(t: pd.DataFrame, hide_index: bool = False) -> None:
-    fmt = {c: "{:,.0f}" for c in t.columns if pd.api.types.is_numeric_dtype(t[c])}
-    if "Order Value" in t.columns:
-        fmt["Order Value"] = "${:,.0f}"
-    st.dataframe(t.style.format(fmt), use_container_width=True, hide_index=hide_index)
-
-
-def aging_view(level: str) -> None:
-    stored = repo.list_aging(level)
-    if not stored:
-        st.info(
-            f"No {level}-level upload yet: run the Plan 7774 aging query "
-            f"({'shipment' if level == 'shipment' else 'load'} version) and upload the result above."
-        )
+# ---- LFLT aging (the aging summary query) -------------------------------------------------
+def aging_view() -> None:
+    """The two shared aging tables for a day, and how they moved over the days."""
+    up = st.file_uploader(
+        "Upload the LFLT Aging summary query result (.xlsx / .csv)",
+        type=["xlsx", "csv"],
+        key="up-aging",
+        help="One upload per day (its AS_OF day). A new upload of the same day replaces it.",
+    )
+    if up is not None:
+        key = f"done-aging-{up.name}-{up.size}"
+        if not st.session_state.get(key):
+            try:
+                day, frame = read_aging_summary(up.getvalue(), up.name, hub_today())
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                repo.save_aging(AGING_LEVEL, day, to_records(frame), up.name)
+                st.session_state[key] = True
+                st.success(f"Saved the LFLT aging of {day:%m/%d/%Y}.")
+    df = aging_frame(repo.load_aging(AGING_LEVEL))
+    if df.empty:
+        st.info("No aging upload yet: run the LFLT Aging summary query and upload the result.")
         return
-    df = prepare(repo.load_aging(level))
-    days = sorted(df["SNAPSHOT_DATE"].unique(), reverse=True)
-    c1, c2 = st.columns([1, 3])
-    day = c1.selectbox(
-        "Snapshot day", days, format_func=lambda d: d.strftime("%a %Y-%m-%d"), key=f"day-{level}"
+    days = sorted(df["DAY"].unique(), reverse=True)
+    day = st.selectbox(
+        "Day", days, format_func=lambda d: d.strftime("%a %m/%d/%Y"), key="aging-day"
     )
-    # every warehouse is listed (0 when it has nothing that day)
-    origins = sorted(set(df["ORIGIN_LOCATION_ID"].unique()) | {"LGC2", "LGC7", "LGC8"})
-    pick = c2.multiselect("Origin", origins, default=origins, key=f"org-{level}")
-    cur = df[(df["SNAPSHOT_DATE"] == day) & df["ORIGIN_LOCATION_ID"].isin(pick)]
-    if cur.empty:
-        st.warning("Nothing for this day and origin.")
-        return
-    k = st.columns(4)
-    k[0].metric("Loads", f"{cur['LOAD_ID'].nunique():,}")
-    k[1].metric("Volume (cu ft)", f"{cur['VOLUME'].sum():,.0f}")
-    k[2].metric("Order value", money(cur["ORDER_VALUE"].sum()) if "ORDER_VALUE" in cur else "-")
-    req = cur[cur["LOAD_STATUS"] == "Requested"]["VOLUME"].sum()
-    k[3].metric("Requested share (volume)", f"{100 * req / max(cur['VOLUME'].sum(), 1):.0f}%")
+    cur = df[df["DAY"] == day]
+    st.markdown(f"##### {day.month}/{day.day} LFLT Aging")
+    for group in ("PG30,50,80", "PG20"):
+        t = aging_table(cur, group)
+        shown = t.copy()
+        for c in shown.columns[2:]:
+            shown[c] = [dash(v) for v in shown[c]]
+        st.dataframe(shown, hide_index=True, use_container_width=True)
 
-    st.markdown("##### Summary — Origin × Hold / Requested")
-    show_table(summary_table(cur, level), hide_index=True)
-
-    a, b = st.columns(2)
-    with a:
-        st.markdown("##### PG 20 — volume past / not past RDD")
-        show_table(rdd_split(in_pg(cur, {"20"}), pick))
-    with b:
-        st.markdown("##### PG 30, 50 & 80 — volume by Drop in TMS aging")
-        show_table(aging_pivot(in_pg(cur, {"30", "50", "80"}), "DROP_AGING_BUCKET", pick))
-    if level == "load":
-        st.caption("A load with mixed plan groups counts in every table its groups match.")
-
-    st.markdown("##### Daily trend")
-    t1, t2 = st.columns([1, 1])
-    split = t1.selectbox(
-        "Split by",
-        ["LOAD_STATUS", "ORIGIN_LOCATION_ID", "DROP_AGING_BUCKET", "RDD_AGING_BUCKET", "PG"],
-        format_func=lambda c: {
-            "LOAD_STATUS": "Hold / Requested",
-            "ORIGIN_LOCATION_ID": "Origin",
-            "DROP_AGING_BUCKET": "Drop in TMS aging",
-            "RDD_AGING_BUCKET": "RDD aging",
-            "PG": "Plan group",
-        }[c],
-        key=f"split-{level}",
+    st.markdown("##### Over the days")
+    view = st.radio(
+        "Show",
+        ["PG30,50,80 by days in TMS", "PG20 by RDD", "Hold / Requested"],
+        horizontal=True,
+        key="aging-trend",
     )
-    value = t2.selectbox(
-        "Value",
-        [c for c in ("VOLUME", "ORDER_VALUE") if c in df.columns],
-        format_func=lambda c: {"VOLUME": "Volume (cu ft)", "ORDER_VALUE": "Order value ($)"}[c],
-        key=f"val-{level}",
-    )
-    trend = daily_trend(df[df["ORIGIN_LOCATION_ID"].isin(pick)], split, value)
-    if split == "LOAD_STATUS":
-        domain, colors = STATUSES, [STATUS_COLOR[s] for s in STATUSES]
-    elif split in ("DROP_AGING_BUCKET", "RDD_AGING_BUCKET"):
-        domain = DROP_BUCKETS if split == "DROP_AGING_BUCKET" else RDD_BUCKETS
-        colors = BUCKET_BLUES
+    if view == "Hold / Requested":
+        part = df[df["STATUS"].isin(["Hold", "Requested"])]
+        long = part.groupby(["DAY", "STATUS"], as_index=False)["VOLUME"].sum()
+        long = long.rename(columns={"STATUS": "Group"})
+        domain, colors = ["Hold", "Requested"], [STATUS_COLOR["Hold"], STATUS_COLOR["Requested"]]
     else:
-        domain = sorted(trend[split].unique())
-        colors = SERIES[: len(domain)] if len(domain) <= len(SERIES) else None
-    trend["order"] = trend[split].map({d: i for i, d in enumerate(domain)})
-    title = "Volume (cu ft)" if value == "VOLUME" else "Order value ($)"
+        group = "PG20" if view == "PG20 by RDD" else "PG30,50,80"
+        cols = RDD_COLS if group == "PG20" else DAY_COLS
+        labels = RDD_LABELS if group == "PG20" else DAY_LABELS
+        part = df[(df["PLAN_GROUP"] == group) & df["STATUS"].isin(["Hold", "Requested"])]
+        long = (
+            part.groupby("DAY", as_index=False)[cols]
+            .sum()
+            .melt(id_vars="DAY", var_name="Group", value_name="VOLUME")
+        )
+        long["Group"] = long["Group"].map(labels)
+        domain = [labels[c] for c in cols]
+        colors = ["#d03b3b", "#9cc1ec"] if group == "PG20" else BUCKET_BLUES[: len(cols)]
+    long["order"] = long["Group"].map({d: i for i, d in enumerate(domain)})
     chart = (
-        alt.Chart(trend)
-        .mark_bar(size=18 if trend["SNAPSHOT_DATE"].nunique() < 30 else 8)
+        alt.Chart(long)
+        .mark_bar(size=18 if long["DAY"].nunique() < 30 else 8)
         .encode(
             x=alt.X(
-                "yearmonthdate(SNAPSHOT_DATE):O",
-                title="Snapshot day",
-                axis=alt.Axis(labelAngle=0, format="%m/%d"),
+                "yearmonthdate(DAY):O", title="Day", axis=alt.Axis(labelAngle=0, format="%m/%d")
             ),
-            y=alt.Y(f"{value}:Q", title=title, axis=alt.Axis(grid=True)),
+            y=alt.Y("VOLUME:Q", title="Volume (cu ft)", axis=alt.Axis(grid=True)),
             color=alt.Color(
-                f"{split}:N",
+                "Group:N",
                 title=None,
-                scale=alt.Scale(domain=domain, range=colors) if colors else alt.Undefined,
+                scale=alt.Scale(domain=domain, range=colors),
                 legend=alt.Legend(orient="top"),
             ),
             order=alt.Order("order:Q"),
             tooltip=[
-                alt.Tooltip("yearmonthdate(SNAPSHOT_DATE):T", title="Day", format="%m/%d/%Y"),
-                alt.Tooltip(f"{split}:N", title="Group"),
-                alt.Tooltip(f"{value}:Q", title=title, format=",.0f"),
+                alt.Tooltip("yearmonthdate(DAY):T", title="Day", format="%m/%d/%Y"),
+                alt.Tooltip("Group:N"),
+                alt.Tooltip("VOLUME:Q", title="Volume", format=",.0f"),
             ],
         )
         .properties(height=280)
     )
     st.altair_chart(chart, use_container_width=True)
-
-    with st.expander("Build your own pivot"):
-        dims = [
-            c
-            for c in (
-                "ORIGIN_LOCATION_ID",
-                "LOAD_STATUS",
-                "PG",
-                "DROP_AGING_BUCKET",
-                "RDD_AGING_BUCKET",
-                "SERVICE_CODE",
-                "MAIN_CUSTOMER" if level == "load" else "CUSTOMER",
-                "MAIN_DEST_CITY" if level == "load" else "DEST_CITY",
-            )
-            if c in cur.columns
-        ]
-        p1, p2, p3 = st.columns(3)
-        rows_by = p1.multiselect("Rows", dims, default=dims[:2], key=f"pr-{level}")
-        col_by = p2.selectbox(
-            "Columns", ["(none)", *dims], index=4 if len(dims) > 3 else 0, key=f"pc-{level}"
-        )
-        measure = p3.selectbox(
-            "Value",
-            ["VOLUME", "ORDER_VALUE", "Loads"] + (["Shipments"] if level == "shipment" else []),
-            key=f"pv-{level}",
-        )
-        if rows_by:
-            values, func = (
-                ("LOAD_ID", "nunique")
-                if measure == "Loads"
-                else ("SHIPMENT_ID", "count")
-                if measure == "Shipments"
-                else (measure, "sum")
-            )
-            t = pd.pivot_table(
-                cur,
-                index=rows_by,
-                columns=None if col_by == "(none)" else col_by,
-                values=values,
-                aggfunc=func,
-                fill_value=0,
-                observed=True,
-                margins=True,
-                margins_name="Grand Total",
-            )
-            st.dataframe(t.round(1), use_container_width=True)
-
-    with st.expander("Rows of this day"):
-        st.dataframe(cur.drop(columns=["PG"]), use_container_width=True, hide_index=True)
     with st.expander("Stored uploads"):
-        for d, n, name in stored:
+        for d, n, name in repo.list_aging(AGING_LEVEL):
             r1, r2 = st.columns([4, 1])
-            r1.write(f"{d:%a %Y-%m-%d} · {n} rows · {name}")
-            if r2.button("Delete", key=f"del-{level}-{d}"):
-                repo.delete_aging(level, d)
+            r1.write(f"{d:%a %m/%d/%Y} · {n} rows · {name}")
+            if r2.button("Delete", key=f"del-aging-{d}"):
+                repo.delete_aging(AGING_LEVEL, d)
                 st.rerun()
 
 
@@ -441,42 +365,14 @@ def perf_view() -> None:
                 st.rerun()
 
 
-tab_res, tab_perf, tab_load, tab_ship = st.tabs(
-    ["Appointment results", "LFLT performance", "Aging — load level", "Aging — shipment level"]
-)
+tab_res, tab_perf, tab_aging = st.tabs(["Appointment results", "LFLT performance", "LFLT Aging"])
 with tab_perf:
     perf_view()
+with tab_aging:
+    aging_view()
 with tab_res:
     appt_rows = repo.list_appointments()
     if not appt_rows:
         st.info("No appointments yet — pick trucks on **Results** first.")
     else:
         appointment_results(appt_rows)
-
-for tab, level in ((tab_load, "load"), (tab_ship, "shipment")):
-    with tab:
-        up = st.file_uploader(
-            "Upload the Plan 7774 aging query result (load or shipment version, .xlsx / .csv)",
-            type=["xlsx", "csv"],
-            key=f"up-{level}",
-            help="Run the query daily and upload it: each snapshot day is kept, so the trend "
-            "builds up. A new upload of the same day replaces that day.",
-        )
-        if up is not None:
-            key = f"done-{level}-{up.name}-{up.size}"
-            if not st.session_state.get(key):
-                try:
-                    frame = read_upload(up.getvalue(), up.name)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    got = detect_level(frame)
-                    day = snapshot_day(frame, hub_today())
-                    repo.save_aging(got, day, to_records(frame), up.name)
-                    st.session_state[key] = True
-                    st.success(
-                        f"Saved {len(frame)} {got}-level rows for {day:%Y-%m-%d}"
-                        + ("" if got == level else f" (shown in the {got}-level tab)")
-                        + "."
-                    )
-        aging_view(level)

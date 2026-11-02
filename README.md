@@ -168,13 +168,10 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    stops over any range of days, grouped by day, week, month or year.  *LFLT performance*:
    upload the LFLT performance query result (load level; uploads add up, the latest
    upload of a load wins) — average stops per load by day, week, month or year against a
-   target line (3 stops), with loads, share of loads at the target and volume per load.  *Aging — load
-   level* / *Aging — shipment level*: upload the Plan 7774 aging query result (load or
-   shipment version; the level is detected) once a day; every snapshot day is kept.
-   Per day: the Origin × Hold / Requested summary (loads, volume, order value), PG 20
-   volume past / not past RDD and PG 30, 50 & 80 volume by Drop in TMS aging (every
-   warehouse × Hold / Requested listed, 0 when empty), a daily trend chart (split by
-   status, origin, aging or plan group) and a build-your-own pivot.
+   target line (3 stops), with loads, share of loads at the target and volume per load.  *LFLT Aging*: upload the LFLT Aging summary query
+   result once a day (kept per AS_OF day): the day's two shared tables — PG30,50,80 Hold /
+   Requested / Total by days in TMS (0d … 4d+) and PG20 by RDD passed / not passed, '-'
+   for 0 — and a chart of how they moved over the days.
 
 ### Command line
 

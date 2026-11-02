@@ -150,32 +150,23 @@ def test_select_truck_then_appointments_page(db_env: Repository) -> None:
         assert not an.exception, an.exception
 
 
-def test_analyze_page_takes_both_uploads(db_env: Repository) -> None:
-    import io
+def test_analyze_lflt_aging_tab(db_env: Repository) -> None:
+    import datetime as dt
 
-    import pandas as pd
+    from routeopt.analyze import AGING_LEVEL, read_aging_summary, to_records
 
-    from tests.test_analyze import _ship_frame
+    from tests.test_analyze import _summary_frame, _xlsx
 
     at = _run("pages/7_Analyze.py")
     assert at.title[0].value == "Analyze"
-    ship = _ship_frame()
-    load = ship.drop(columns=["SHIPMENT_ID"]).groupby(
-        ["LOAD_ID", "ORIGIN_LOCATION_ID", "LOAD_STATUS", "PLAN_ID_GRP"], as_index=False
-    ).agg(VOLUME=("VOLUME", "sum"), ORDER_VALUE=("ORDER_VALUE", "sum"),
-          DROP_AGING_BUCKET=("DROP_AGING_BUCKET", "first"),
-          RDD_AGING_BUCKET=("RDD_AGING_BUCKET", "first"),
-          SNAPSHOT_DATE=("SNAPSHOT_DATE", "first"))  # fmt: skip
-    import datetime as dt
-
-    from routeopt.analyze import to_records
-
-    db_env.save_aging("shipment", dt.date(2026, 10, 30), to_records(ship), "s.xlsx")
-    db_env.save_aging("load", dt.date(2026, 10, 30), to_records(load), "l.xlsx")
+    for as_of in ("2026-10-29", "2026-10-30"):
+        day, df = read_aging_summary(_xlsx(_summary_frame(as_of)), "a.xlsx", dt.date(2026, 1, 1))
+        db_env.save_aging(AGING_LEVEL, day, to_records(df), "a.xlsx")
     at = _run("pages/7_Analyze.py")
-    assert not at.exception, at.exception
-    assert len(at.dataframe) >= 4  # summary + two aging tables, both levels
-    assert pd is not None and io is not None
+    assert len(at.dataframe) >= 2  # the PG30,50,80 and PG20 tables
+    for view in ("PG20 by RDD", "Hold / Requested"):
+        next(r for r in at.radio if r.key == "aging-trend").set_value(view).run()
+        assert not at.exception, at.exception
 
 
 def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
