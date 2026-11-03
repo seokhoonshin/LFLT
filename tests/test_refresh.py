@@ -210,3 +210,37 @@ def test_the_shipped_queries_toml_is_valid() -> None:
     assert [s.target for s in specs] == ["analyze.performance", "analyze.aging", "file"]
     for s in specs:
         read_sql(ROOT, s)  # every file exists and every :bind has a param
+
+
+def test_comments_do_not_hide_or_fake_a_select(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from routeopt.refresh import strip_comments
+
+    connect, _ = _connect({"dual": (["X"], [(1,)])})
+    login = OracleLoginStub()
+    # comment lines before the WITH / SELECT (as in the shipped queries) are fine
+    sql = "-- a note\n-- another\nWITH a AS (SELECT 1 FROM dual) SELECT * FROM a -- end"
+    assert run_sql(connect, login, sql, {}).shape[1] == 1
+    assert run_sql(connect, login, "/* hint */ SELECT 1 FROM dual", {}).shape[1] == 1
+    # a comment cannot smuggle in a statement, and a -- inside a string is not a comment
+    for bad in ("-- SELECT\nDELETE FROM t", "/* SELECT */ UPDATE t SET a = 1", "-- only a comment"):
+        with pytest.raises(RefreshError, match="Only SELECT"):
+            run_sql(connect, login, bad, {})
+    assert strip_comments("SELECT '--x' AS a FROM dual -- c") == "SELECT '--x' AS a FROM dual "
+    assert " ".join(strip_comments("SELECT 'it''s' /* c */ FROM dual").split()) == (
+        "SELECT 'it''s' FROM dual"
+    )
+
+
+def OracleLoginStub():  # type: ignore[no-untyped-def]  # noqa: N802
+    from routeopt.refresh import OracleLogin
+
+    return OracleLogin("db.example", 1521, "SVC", "ro", "pw")
+
+
+def test_every_shipped_query_passes_the_select_guard() -> None:
+    from routeopt.refresh import strip_comments
+
+    for spec in load_queries(ROOT):
+        sql = read_sql(ROOT, spec)
+        first = strip_comments(sql).lstrip().split(None, 1)[0].lower()
+        assert first in ("with", "select"), spec.file

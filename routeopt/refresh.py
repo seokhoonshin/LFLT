@@ -117,7 +117,9 @@ def read_sql(root: Path, spec: QuerySpec) -> str:
     if not path.exists():
         raise RefreshError(f"SQL file not found: {spec.file}")
     sql = path.read_text(encoding="utf-8").strip().rstrip(";").strip()
-    used = set(re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", re.sub(r"'[^']*'", "''", sql)))
+    used = set(
+        re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", re.sub(r"'[^']*'", "''", strip_comments(sql)))
+    )
     unknown = used - set(spec.params)
     if unknown:
         raise RefreshError(
@@ -126,11 +128,43 @@ def read_sql(root: Path, spec: QuerySpec) -> str:
     return sql
 
 
+def strip_comments(sql: str) -> str:
+    """The SQL without its -- line comments and /* */ blocks (hints too), outside strings."""
+    out: list[str] = []
+    i, n = 0, len(sql)
+    while i < n:
+        two = sql[i : i + 2]
+        if sql[i] == "'":  # a string literal: copy to its closing quote ('' is an escape)
+            j = i + 1
+            while j < n:
+                if sql[j] == "'" and sql[j + 1 : j + 2] == "'":
+                    j += 2
+                elif sql[j] == "'":
+                    break
+                else:
+                    j += 1
+            out.append(sql[i : j + 1])
+            i = j + 1
+        elif two == "--":
+            while i < n and sql[i] != "\n":
+                i += 1
+        elif two == "/*":
+            end = sql.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        else:
+            out.append(sql[i])
+            i += 1
+    return "".join(out)
+
+
 def run_sql(connect: Connect, login: OracleLogin, sql: str, params: dict[str, Any]) -> pd.DataFrame:
     """Run one SELECT (read-only) and return it as a frame with upper-case column names."""
-    if not re.match(r"\s*(with|select)\b", sql, re.IGNORECASE):
+    if not re.match(r"\s*(with|select)\b", strip_comments(sql), re.IGNORECASE):
         raise RefreshError("Only SELECT queries can be refreshed.")
-    used = set(re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", re.sub(r"'[^']*'", "''", sql)))
+    used = set(
+        re.findall(r"(?<![:\w]):([A-Za-z_]\w*)", re.sub(r"'[^']*'", "''", strip_comments(sql)))
+    )
     with connect(user=login.username, password=login.password, dsn=login.dsn) as conn:
         cur = conn.cursor()
         cur.execute(sql, {k: v for k, v in params.items() if k in used})
