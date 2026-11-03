@@ -90,8 +90,9 @@ with st.expander("…or get the candidates straight from Oracle", expanded=False
                 st.session_state.update(
                     {
                         "upload_bytes": _data,
-                        "upload_name": f"oracle_candidates_{dt.date.today():%Y%m%d}.xlsx",
+                        "upload_name": f"oracle_candidates_{dt.datetime.now():%Y%m%d_%H%M%S}.xlsx",
                         "upload_digest": hashlib.sha256(_data).hexdigest(),
+                        "upload_source": f"Oracle, fetched {dt.datetime.now():%H:%M:%S}",
                         "mapping": {},
                         "exclude_rows": set(),
                     }
@@ -99,15 +100,21 @@ with st.expander("…or get the candidates straight from Oracle", expanded=False
                 st.session_state.pop("ingest_cache", None)
                 st.success(f"Loaded {len(_df):,} candidate shipments from Oracle.")
 uploaded = st.file_uploader("Excel (.xlsx) or CSV with one row per shipment", type=["xlsx", "csv"])
-if uploaded is not None:
+if uploaded is None:
+    st.session_state.pop("uploader_digest", None)  # the file was removed: a re-upload counts
+else:
     data = uploaded.getvalue()
     digest = hashlib.sha256(data).hexdigest()
-    if st.session_state.get("upload_digest") != digest:
+    # a file in the uploader replaces the data only when it is NEW: one that stays in the
+    # box must not overwrite the candidates fetched from Oracle afterwards
+    if st.session_state.get("uploader_digest") != digest:
+        st.session_state["uploader_digest"] = digest
         st.session_state.update(
             {
                 "upload_bytes": data,
                 "upload_name": uploaded.name,
                 "upload_digest": digest,
+                "upload_source": "uploaded file",
                 "mapping": {},
                 "exclude_rows": set(),
             }
@@ -118,7 +125,10 @@ if "upload_bytes" not in st.session_state:
         "Upload a workbook to start. Need a file? `routeopt sample --all-coords` writes a synthetic one."
     )
     st.stop()
-st.caption(f"File: **{st.session_state['upload_name']}**")
+st.caption(
+    f"File: **{st.session_state['upload_name']}** · source: "
+    f"{st.session_state.get('upload_source', 'uploaded file')}"
+)
 
 # ---------------------------------------------------------------------------------------
 # 2. Settings
