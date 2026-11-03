@@ -228,3 +228,21 @@ def test_team_viewer_sees_appointments_read_only(
     assert not any(b.label == "Select this truck" for b in res.button)
     an = _run("pages/7_Analyze.py")
     assert not an.exception
+
+
+def test_analyze_refresh_panel_shows_for_editors_not_viewers(
+    db_env: Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import routeopt.share
+    import streamlit as st
+
+    at = _run("pages/7_Analyze.py")
+    assert not at.exception, at.exception
+    assert any(e.label == "Refresh from Oracle" for e in at.expander)
+    assert any(b.label == "Refresh all" for b in at.button)
+    assert next(b for b in at.button if b.label == "Refresh all").disabled  # no oracle.toml here
+    monkeypatch.setenv("OPENMILE_ROLE", "viewer")
+    monkeypatch.setattr(routeopt.share, "sync", lambda *a, **k: "same")
+    st.cache_resource.clear()
+    view = _run("pages/7_Analyze.py")
+    assert not any(b.label == "Refresh all" for b in view.button)

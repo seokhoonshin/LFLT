@@ -10,6 +10,8 @@ for _p in (_APP.parent, _APP):  # repo root (routeopt package) and app/ (_common
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import os
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -31,8 +33,9 @@ from routeopt.analyze import (
 )
 from routeopt.appointments import OUTCOMES, outcome_summary, period_key, stop_outcomes
 from routeopt.domain import hub_today
+from routeopt.refresh import RefreshError, load_queries, refresh
 
-from _common import get_repo, osrm_status_line, setup_page, team_share
+from _common import get_config, get_repo, osrm_status_line, setup_page, team_share
 
 setup_page("Analyze")
 osrm_status_line()
@@ -408,6 +411,75 @@ def perf_view() -> None:
                 repo.delete_aging(PERF_LEVEL, d)
                 st.rerun()
 
+
+def refresh_panel() -> None:
+    """Refresh all: run the queries of queries.toml against Oracle and store the results."""
+    cfg = get_config()
+    root = Path(__file__).resolve().parents[2]
+    try:
+        specs = load_queries(root)
+    except RefreshError as exc:
+        st.warning(f"Refresh is not set up: {exc}")
+        return
+    ready = (root / "oracle.toml").exists()
+    with st.expander("Refresh from Oracle", expanded=False):
+        if not ready:
+            st.info(
+                "Copy `oracle.toml.example` to `oracle.toml` and fill in the Oracle login "
+                "(host, port, service_name, username). The password: `ORACLE_PASSWORD` in "
+                "`.env`, or type it below."
+            )
+        for sp in specs:
+            st.markdown(
+                f"- **{sp.name}** → {sp.target}"
+                + ("" if sp.enabled else " *(off in queries.toml; run it with its own button)*")
+            )
+        pw = ""
+        if not os.environ.get("ORACLE_PASSWORD"):
+            pw = st.text_input(
+                "Oracle password (this session only)", type="password", key="refresh-pw"
+            )
+        c1, c2 = st.columns([1, 2])
+        run_all = c1.button("Refresh all", type="primary", disabled=not ready, key="refresh-all")
+        one = c2.selectbox(
+            "…or one query", ["(choose)", *[sp.name for sp in specs]], key="refresh-one"
+        )
+        run_one = c2.button(
+            "Refresh this one", disabled=not ready or one == "(choose)", key="refresh-one-btn"
+        )
+        if run_all or run_one:
+            box = st.empty()
+            done: list[str] = []
+
+            def show(res) -> None:  # type: ignore[no-untyped-def]
+                done.append(
+                    f"{'✅' if res.ok else '❌'} **{res.name}** — "
+                    + (f"{res.rows:,} rows, {res.message}" if res.ok else res.message)
+                    + f" ({res.seconds:.0f}s)"
+                )
+                box.markdown("\n\n".join(done))
+
+            try:
+                with st.spinner("Running the queries on Oracle…"):
+                    results = refresh(
+                        root,
+                        repo,
+                        cfg.data_dir,
+                        only=one if run_one else None,
+                        password=pw or None,
+                        on_progress=show,
+                    )
+            except RefreshError as exc:
+                st.error(str(exc))
+            else:
+                if all(r.ok for r in results):
+                    st.success("Refreshed. The tabs below show the new data.")
+                else:
+                    st.warning("Some queries failed (see above); the others were refreshed.")
+
+
+if not VIEWER:
+    refresh_panel()
 
 tab_res, tab_perf, tab_aging = st.tabs(["Appointment results", "LFLT performance", "LFLT Aging"])
 with tab_perf:

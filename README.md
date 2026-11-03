@@ -180,6 +180,24 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    Requested / Total by days in TMS (0d … 4d+) and PG20 by RDD passed / not passed, '-'
    for 0 — and a chart of how they moved over the days.
 
+### Refresh from Oracle (Analyze)
+
+**Analyze → Refresh from Oracle → Refresh all** runs the queries listed in `queries.toml`
+(SQL files in `queries/`) and stores each result like an upload: LFLT performance and LFLT
+Aging go to their Analyze tabs (a new snapshot day / the latest values of each load), the
+New Run candidates query (off by default) to `data/refresh/ca_lflt_candidates.xlsx`.  One
+failing query does not stop the others, and each query also has its own button.
+
+1. Copy `oracle.toml.example` to `oracle.toml` and fill in `host`, `port`, `service_name`
+   and `username` (a read-only account is enough; the file is git-ignored).
+2. Put the password in `.env` as `ORACLE_PASSWORD=...` (or leave it out: the panel asks for
+   it once per session).
+3. `pip install oracledb` once (it is in the dependencies; thin mode, no Oracle Client).
+
+Query settings such as the start date are `params` in `queries.toml` (bind variables
+`:start_date` in the SQL).  Only SELECT statements are run.  In a team setup, the refresh
+button is on editor PCs only; viewers get the results through the shared branch.
+
 ### Team sharing (Appointments and Analyze)
 
 Everyone runs OpenMile on their own PC from a **git clone** (not a ZIP).  Set the role in
