@@ -47,10 +47,12 @@ from _common import (
     osrm_healthy,
     osrm_status_line,
     setup_page,
+    team_share,
 )
 
 setup_page("Appointments")
 osrm_status_line()
+VIEWER = team_share()  # a team viewer sees everything read-only
 repo = get_repo()
 
 st.title("Appointments")
@@ -306,7 +308,11 @@ def geometry(coords):  # type: ignore[no-untyped-def]
 
 def load_map(run_id: str, load_items: list[dict]) -> None:
     """The load on its own map: warehouse, then its live (not declined) stops in order."""
-    by_id = {s.stop_id: s for s in load_record(run_id).stops}
+    try:
+        by_id = {s.stop_id: s for s in load_record(run_id).stops}
+    except LookupError:  # a team viewer's PC does not have the run itself
+        st.caption("The map needs the run, which is only on the PC that made it.")
+        return
     points, missing = [], 0
     for s in sorted(group_by_stop(load_items), key=lambda x: x["stop_seq"]):
         if s["stop_seq"] >= 900 or s["status"] == "Declined":
@@ -499,16 +505,16 @@ def render(stage_rows: list[dict], stage: str) -> None:
                 st.rerun()
 
 
-def render_final(final_rows: list[dict]) -> None:
-    """Read-only finalized loads: the export columns (warehouse first), shipments, status;
-    per load a download and a Map toggle."""
+def render_final(final_rows: list[dict], stage: str = "finalized") -> None:
+    """Read-only loads (the Finalized tab, and every tab for a team viewer): the export
+    columns (warehouse first), shipments, status; per load a download and a Map toggle."""
     final_pickups = export_pickups(final_rows)
     st.download_button(
-        "Download all finalized loads shown (Excel)",
+        f"Download all {stage} loads shown (Excel)",
         export_stops_by_load(final_rows, pickups=export_pickups(final_rows)),
-        file_name=f"finalized_{day.isoformat()}.xlsx",
+        file_name=f"{stage}_{day.isoformat()}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl-all-finalized",
+        key=f"dl-all-{stage}",
     )
     final_sorted = sorted(
         final_rows,
@@ -517,7 +523,12 @@ def render_final(final_rows: list[dict]) -> None:
     for (run_id, _v, truck), group in groupby(final_sorted, key=truck_key):
         items = list(group)
         stops_here = group_by_stop(items)
-        st.markdown(f"#### {truck} · {len(stops_here)} confirmed stops")
+        done = sum(s["status"] == "Confirmed" for s in stops_here)
+        st.markdown(
+            f"#### {truck} · {len(stops_here)} confirmed stops"
+            if stage == "finalized"
+            else f"#### {truck} · {done}/{len(stops_here)} stops confirmed"
+        )
         st.caption(
             f"Delivery day {items[0]['delivery_date']:%m/%d/%Y} · run {run_id} · "
             f"from {origin_label(items[0]['dc'])} · {len(items)} shipments"
@@ -526,8 +537,12 @@ def render_final(final_rows: list[dict]) -> None:
         for load_seq, load_items in groupby(stops_here, key=lambda r: r["load_seq"]):
             load_items = list(load_items)
             load_seqs.append(load_seq)
+            if stage != "finalized":  # the record: declined stops are listed too
+                load_items = [x for x in load_items if x["stop_seq"] < 900]
             sheet = load_sheet_rows(
-                load_items, pickup=final_pickups.get((run_id, truck, load_seq), "")
+                load_items,
+                exclude_declined=False,
+                pickup=final_pickups.get((run_id, truck, load_seq), ""),
             )
             extra = [{"Shipment IDs": None, "Status": None}] + [
                 {"Shipment IDs": x["shipment_ids"], "Status": x["status"]} for x in load_items
@@ -541,7 +556,7 @@ def render_final(final_rows: list[dict]) -> None:
                 use_container_width=True,
                 column_config={"date": st.column_config.DateColumn("date", format="MM/DD/YYYY")},
             )
-        load_tools("finalized", final_rows, run_id, truck, items, load_seqs)
+        load_tools(stage, final_rows, run_id, truck, items, load_seqs)
 
 
 if note := st.session_state.pop("replan_note", None):
@@ -561,7 +576,7 @@ with tab_orig:
     st.caption(
         "The trucks as picked on Results — the record: declined stops stay here as declined."
     )
-    for rid in sorted({r["run_id"] for r in day_orig}):
+    for rid in [] if VIEWER else sorted({r["run_id"] for r in day_orig}):
         n_declined = len(declined_stop_ids([r for r in rows if r["run_id"] == rid]))
         if st.button(
             f"Re-optimize {rid} without declined stops ({n_declined})",
@@ -574,7 +589,10 @@ with tab_orig:
         ):
             run_replan(rid)
             st.rerun()
-    render(day_orig, "original")
+    if VIEWER:
+        render_final(day_orig, "original")
+    else:
+        render(day_orig, "original")
 with tab_reopt:
     if not day_reopt:
         st.info(
@@ -586,7 +604,7 @@ with tab_reopt:
             "The re-plan without the declined stops. A status set here is also set on the "
             "same shipment in the Original tab."
         )
-        for rid in sorted({r["run_id"] for r in day_reopt}):
+        for rid in [] if VIEWER else sorted({r["run_id"] for r in day_reopt}):
             with st.expander(f"Discard the re-optimization of {rid}"):
                 new_only = {r["shipment_id"] for r in day_reopt if r["run_id"] == rid} - {
                     r["shipment_id"] for r in rows if r["run_id"] == rid and not is_reopt(r)
@@ -608,7 +626,10 @@ with tab_reopt:
                     n = repo.delete_reoptimized(rid)
                     st.toast(f"Re-optimization of {rid} discarded ({n} rows).")
                     st.rerun()
-        render(day_reopt, "reoptimized")
+        if VIEWER:
+            render_final(day_reopt, "reoptimized")
+        else:
+            render(day_reopt, "reoptimized")
 with tab_final:
     st.caption(
         "The loads that go: every stop whose every shipment is **Confirmed**, from the "

@@ -41,11 +41,13 @@ from _common import (
     set_current_run,
     setup_page,
     status_text,
+    team_share,
     tier_label,
 )
 
 setup_page("Results")
 osrm_status_line()
+VIEWER = team_share()
 repo = get_repo()
 cfg = get_config()
 
@@ -163,7 +165,7 @@ for truck in plan.trucks:
             use_container_width=True,
             help="Listed on the Appointments page (remove it there).",
         )
-    elif pick.button(
+    elif not VIEWER and pick.button(
         "Select this truck", key=f"pick-{truck.number}", type="primary", use_container_width=True
     ):
         added = repo.select_truck_for_appointments(appointment_rows(plan, stops, truck.number))

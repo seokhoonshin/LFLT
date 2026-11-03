@@ -112,6 +112,20 @@ class RunRecord:
         return max(self.plans) if self.plans else 0
 
 
+def _jsonable(v: Any) -> Any:
+    return v.isoformat() if isinstance(v, (dt.date, dt.datetime)) else v
+
+
+def _from_json(v: Any, kind: type | None) -> Any:
+    if v is None or kind is None:
+        return v
+    if kind is dt.datetime and isinstance(v, str):
+        return dt.datetime.fromisoformat(v)
+    if kind is dt.date and isinstance(v, str):
+        return dt.date.fromisoformat(v[:10])
+    return v
+
+
 def _dumps(obj: Any) -> str:
     return json.dumps(obj, default=str)
 
@@ -853,6 +867,54 @@ class Repository:
                     row["SNAPSHOT_DATE"] = r.snapshot_date.isoformat()
                     out.append(row)
         return out
+
+    # ---- team sharing ------------------------------------------------------------------
+    def get_state(self, key: str) -> str | None:
+        with self._sf() as session:
+            row = session.get(AppStateRow, key)
+            return json.loads(row.value_json) if row is not None else None
+
+    def set_state(self, key: str, value: str | None) -> None:
+        with self._sf() as session, session.begin():
+            row = session.get(AppStateRow, key)
+            if row is None:
+                session.add(AppStateRow(key=key, value_json=_dumps(value)))
+            else:
+                row.value_json = _dumps(value)
+                row.updated_at = hub_now()
+
+    _SHARED = (AppointmentRow, AgingSnapshotRow)
+
+    def export_shared(self) -> dict[str, list[dict[str, Any]]]:
+        """Every Appointments and Analyze row, as JSON-ready dicts (for the team branch)."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        with self._sf() as session:
+            for model in self._SHARED:
+                cols = [c.name for c in model.__table__.columns]
+                rows = session.execute(select(model).order_by(model.id)).scalars()
+                out[model.__tablename__] = [
+                    {c: _jsonable(getattr(r, c)) for c in cols} for r in rows
+                ]
+        return out
+
+    def import_shared(self, data: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+        """Replace this database's Appointments and Analyze rows with the team's."""
+        counts: dict[str, int] = {}
+        with self._sf() as session, session.begin():
+            for model in self._SHARED:
+                rows = data.get(model.__tablename__)
+                if rows is None:
+                    continue
+                types = {c.name: c.type.python_type for c in model.__table__.columns}
+                session.execute(delete(model))
+                for r in rows:
+                    session.add(
+                        model(
+                            **{k: _from_json(v, types.get(k)) for k, v in r.items() if k in types}
+                        )
+                    )
+                counts[model.__tablename__] = len(rows)
+        return counts
 
     def delete_aging(self, level: str, day: dt.date) -> None:
         with self._sf() as session, session.begin():

@@ -180,6 +180,25 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    Requested / Total by days in TMS (0d … 4d+) and PG20 by RDD passed / not passed, '-'
    for 0 — and a chart of how they moved over the days.
 
+### Team sharing (Appointments and Analyze)
+
+Everyone runs OpenMile on their own PC from a **git clone** (not a ZIP).  Set the role in
+each PC's `.env`:
+
+| `.env` line | What that PC does |
+|---|---|
+| `OPENMILE_ROLE=editor` | Loads what others saved (every 20 s while a page is used) and pushes its own changes (picked trucks, statuses, APPT times, re-plans, Analyze uploads) to the branch `openmile-shared` of the repository |
+| `OPENMILE_ROLE=viewer` | Loads the team's data and shows Appointments / Analyze read-only |
+| (not set) | Nothing is shared (as before) |
+
+The branch only holds the shared data, so the code branch is never touched.  If two
+editors save at the same moment, the second save is not pushed: that PC loads the other
+one's data and asks to make the change again — nothing is overwritten.  Each PC needs read
+access to the repository (editors also push access); do one `git pull` / `git push` by
+hand first so Windows stores the GitHub login.  The run itself (Results, maps, re-plans)
+stays on the PC that made it.  The shared data includes customer names, addresses and
+contacts: keep the repository private.
+
 ### Command line
 
 ```powershell

@@ -32,10 +32,11 @@ from routeopt.analyze import (
 from routeopt.appointments import OUTCOMES, outcome_summary, period_key, stop_outcomes
 from routeopt.domain import hub_today
 
-from _common import get_repo, osrm_status_line, setup_page
+from _common import get_repo, osrm_status_line, setup_page, team_share
 
 setup_page("Analyze")
 osrm_status_line()
+VIEWER = team_share()  # a viewer sees the team's data; uploads and deletes are hidden
 repo = get_repo()
 OUTCOME_COLOR = {"Confirmed": "#0ca30c", "Declined": "#d03b3b", "Open": "#9a9a92"}
 OUTCOME_ICON = {"Confirmed": "✅", "Declined": "⛔", "Open": "⏳"}
@@ -153,11 +154,15 @@ def appointment_results(rows: list[dict]) -> None:
 # ---- LFLT aging (the aging summary query) -------------------------------------------------
 def aging_view() -> None:
     """The two shared aging tables for a day, and how they moved over the days."""
-    up = st.file_uploader(
-        "Upload the LFLT Aging summary query result (.xlsx / .csv)",
-        type=["xlsx", "csv"],
-        key="up-aging",
-        help="One upload per day (its AS_OF day). A new upload of the same day replaces it.",
+    up = (
+        None
+        if VIEWER
+        else st.file_uploader(
+            "Upload the LFLT Aging summary query result (.xlsx / .csv)",
+            type=["xlsx", "csv"],
+            key="up-aging",
+            help="One upload per day (its AS_OF day). A new upload of the same day replaces it.",
+        )
     )
     if up is not None:
         key = f"done-aging-{up.name}-{up.size}"
@@ -241,18 +246,22 @@ def aging_view() -> None:
         for d, n, name in repo.list_aging(AGING_LEVEL):
             r1, r2 = st.columns([4, 1])
             r1.write(f"{d:%a %m/%d/%Y} · {n} rows · {name}")
-            if r2.button("Delete", key=f"del-aging-{d}"):
+            if not VIEWER and r2.button("Delete", key=f"del-aging-{d}"):
                 repo.delete_aging(AGING_LEVEL, d)
                 st.rerun()
 
 
 def perf_view() -> None:
     """LFLT performance: average stops per load by day / week / month / year vs target."""
-    up = st.file_uploader(
-        "Upload the LFLT performance query result (load level, .xlsx / .csv)",
-        type=["xlsx", "csv"],
-        key="up-perf",
-        help="Uploads add up: a load uploaded again is replaced by its latest values.",
+    up = (
+        None
+        if VIEWER
+        else st.file_uploader(
+            "Upload the LFLT performance query result (load level, .xlsx / .csv)",
+            type=["xlsx", "csv"],
+            key="up-perf",
+            help="Uploads add up: a load uploaded again is replaced by its latest values.",
+        )
     )
     if up is not None:
         key = f"done-perf-{up.name}-{up.size}"
@@ -395,7 +404,7 @@ def perf_view() -> None:
         for d, n, name in repo.list_aging(PERF_LEVEL):
             r1, r2 = st.columns([4, 1])
             r1.write(f"{d:%a %Y-%m-%d} · {n} loads · {name}")
-            if r2.button("Delete", key=f"del-perf-{d}"):
+            if not VIEWER and r2.button("Delete", key=f"del-perf-{d}"):
                 repo.delete_aging(PERF_LEVEL, d)
                 st.rerun()
 

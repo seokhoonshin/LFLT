@@ -238,3 +238,40 @@ def kpi_cards(plan: Plan) -> None:
         if k.pull_forward_available.get(d, 0)
     )
     d6.metric("Pull-forward", pf or "off")
+
+
+# ---- team sharing (Appointments / Analyze through a git branch) ----------------------------
+def team_share() -> bool:
+    """Sync the Appointments / Analyze data with the team branch when OPENMILE_ROLE is set
+    (call at the top of a page).  Returns True when this PC is a read-only viewer."""
+    from routeopt.share import ShareError, sync
+
+    cfg = get_config()
+    role = {"publisher": "editor"}.get(
+        cfg.share_role.strip().lower(), cfg.share_role.strip().lower()
+    )
+    if role not in ("editor", "viewer"):
+        return False
+    import time
+
+    last = st.session_state.get("share_pulled_at", 0.0)
+    pull = time.monotonic() - last > 20  # look for others' saves at most every 20 s
+    try:
+        status = sync(get_repo(), ROOT, role, cfg.share_branch, cfg.share_remote, pull=pull)
+    except ShareError as exc:
+        st.sidebar.warning(f"Team sharing is off right now: {exc}")
+        return role == "viewer"
+    if pull:
+        st.session_state["share_pulled_at"] = time.monotonic()
+    if status == "conflict":
+        st.warning(
+            "Someone else saved at the same time: their version is loaded and your last "
+            "change was not saved. Please make it again."
+        )
+    elif status == "loaded":
+        st.toast("Loaded the team's latest appointments / analyze data.")
+    st.sidebar.caption(
+        f"👥 Team sharing: **{'view only' if role == 'viewer' else 'editing'}** · "
+        f"synced {dt.datetime.now():%H:%M:%S}"
+    )
+    return role == "viewer"

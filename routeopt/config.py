@@ -114,6 +114,11 @@ class AppConfig(BaseSettings):
     tomtom_max_cells: int = Field(default=200, alias="TOMTOM_MAX_CELLS")  # per request
     tomtom_max_nodes: int = Field(default=60, alias="TOMTOM_MAX_NODES")  # per run
     tomtom_timeout_s: float = Field(default=60.0, alias="TOMTOM_TIMEOUT_S")
+    # team sharing of the Appointments / Analyze data through a git branch:
+    # "publisher" pushes what is saved here, "viewer" pulls it and shows it read-only
+    share_role: str = Field(default="", alias="OPENMILE_ROLE")
+    share_branch: str = Field(default="openmile-shared", alias="OPENMILE_SHARE_BRANCH")
+    share_remote: str = Field(default="origin", alias="OPENMILE_SHARE_REMOTE")
 
     @property
     def effective_db_url(self) -> str:

@@ -203,3 +203,28 @@ def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
     for period in ("Day", "Week", "Year"):
         next(r for r in at.radio if r.key == "perf-period").set_value(period).run()
         assert not at.exception, at.exception
+
+
+def test_team_viewer_sees_appointments_read_only(
+    db_env: Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import routeopt.share
+    import streamlit as st
+
+    run_id = _saved_run(db_env)
+    from routeopt.appointments import appointment_rows
+
+    rec = db_env.load_run(run_id)
+    truck = next(t for t in rec.plans[0].trucks if any(ld.stops for ld in t.loads))
+    db_env.select_truck_for_appointments(appointment_rows(rec.plans[0], rec.stops, truck.number))
+    monkeypatch.setenv("OPENMILE_ROLE", "viewer")
+    monkeypatch.setattr(routeopt.share, "sync", lambda *a, **k: "same")
+    st.cache_resource.clear()
+    ap = _run("pages/6_Appointments.py")
+    labels = [b.label for b in ap.button]
+    assert not any(lbl.startswith(("Save ", "Re-optimize ", "Remove ")) for lbl in labels)
+    assert any("Team sharing" in str(c.value) for c in ap.sidebar.caption)
+    res = _run("pages/3_Results.py", run_id)
+    assert not any(b.label == "Select this truck" for b in res.button)
+    an = _run("pages/7_Analyze.py")
+    assert not an.exception
