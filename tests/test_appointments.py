@@ -30,6 +30,14 @@ def test_picked_truck_is_listed_and_statuses_are_saved(tmp_path) -> None:  # typ
     assert first["truck"] == truck.number and first["load_seq"] == 1 and first["stop_seq"] == 1
     assert first["bill_to_code"] == "BT1" and first["delivery_date"] == plan.plan_date
     assert first["stop_transit_min"] == 0 and first["eta"]
+    # the APPT time starts as the Results ETA, rounded up to the half hour
+    from routeopt.appointments import appt_or_eta, ceil_half_hour, clock_seconds
+
+    eta = clock_seconds(first["eta"])
+    want = ceil_half_hour(eta)
+    assert first["appt_time"] == f"{want // 3600:02d}:{want % 3600 // 60:02d}"
+    assert appt_or_eta({"appt_time": None, "eta": "8:39 AM"}) == "09:00"  # an older row
+    assert appt_or_eta({"appt_time": "10:15", "eta": "8:39 AM"}) == "10:15"  # changed by hand
 
     repo = Repository(f"sqlite:///{tmp_path / 'a.db'}")
     repo.init_schema()

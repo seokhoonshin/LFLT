@@ -48,6 +48,9 @@ def appointment_rows(plan: Plan, stops: list[Stop], truck_number: str) -> list[d
                         "bill_to_code": sh.bill_to_code,
                         "delivery_date": plan.plan_date,
                         "eta": clock(visit.arrive_s),
+                        # the APPT time starts as the Results ETA (rounded up to the half
+                        # hour); the planner changes it to the time agreed with the customer
+                        "appt_time": _hhmm(ceil_half_hour(visit.arrive_s)),
                         "window": f"{clock(visit.eta_window_start_s)} – {clock(visit.eta_window_end_s)}",
                         "volume_cuft": round(sh.volume_cuft, 2),
                         "miles_from_prev": visit.dist_mi_from_prev,
@@ -247,7 +250,7 @@ def load_sheet_rows(
                 "load ID": s.get("load_id") or load_id,
                 "Stop": n,
                 "date": s["delivery_date"],
-                "APPT time": time_text(s.get("appt_time")),
+                "APPT time": time_text(appt_or_eta(s)),
                 "APPT #": s.get("appt_num") or "",
                 "Customer": s["customer"],
                 "Address": s["address"],
@@ -468,3 +471,16 @@ def pickup_seconds(first_stop_s: int | None, drive_s: int | None, earliest_s: in
     if first_stop_s is None or drive_s is None:
         return None
     return max(earliest_s, first_stop_s - drive_s - PICKUP_LOADING_S)
+
+
+def _hhmm(seconds: int) -> str:
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
+
+
+def appt_or_eta(row: dict[str, Any]) -> str | None:
+    """The row's APPT time ("HH:MM"); for a row picked before APPT times were filled in,
+    its plan ETA rounded up to the half hour."""
+    if row.get("appt_time"):
+        return str(row["appt_time"])
+    eta = clock_seconds(row.get("eta"))
+    return _hhmm(ceil_half_hour(eta)) if eta is not None else None

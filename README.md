@@ -160,7 +160,8 @@ The browser opens at <http://localhost:8501>.  Pages (left sidebar):
    *Results so far* shows the confirmed / declined share over any range of days, grouped
    by day, week, month or year.  A third tab, **Finalized**, keeps the confirmed stops of
    both tabs (the loads that go; read-only; a shipment in both counts once) and finds a load by its load ID.
-   Every load in the three tabs has a **Map** toggle.  The warehouse row's APPT time is
+   Every load in the three tabs has a **Map** toggle.  A stop's APPT time starts as its
+   Results ETA (rounded up to the half hour) and can be changed.  The warehouse row's APPT time is
    the **pickup**: the first stop's APPT time (else its ETA rounded up to the half hour)
    minus the drive from the DC minus an hour of loading (8:00 appointment 30 min away ->
    6:30), never before the DC opens (6:00) on load 1; Results shows the same pickup as the

@@ -20,6 +20,7 @@ from routeopt.appointments import (
     EXPORT_COLUMNS,
     STATUSES,
     appointment_rows,
+    appt_or_eta,
     ceil_half_hour,
     clock_seconds,
     export_stops_by_load,
@@ -168,7 +169,7 @@ def table_rows(load_items: list[dict], pickup: str | None = None) -> list[dict]:
                 "load ID": r.get("load_id"),
                 "Stop": r["stop_seq"] + 1,
                 "date": r["delivery_date"],
-                "APPT time": _to_time(r.get("appt_time")),
+                "APPT time": _to_time(appt_or_eta(r)),  # the Results ETA until changed
                 "APPT #": r.get("appt_num"),
                 "Customer": r["customer"],
                 "Address": r["address"],
