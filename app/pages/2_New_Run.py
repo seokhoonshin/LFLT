@@ -13,6 +13,7 @@ for _p in (_APP.parent, _APP):  # repo root (routeopt package) and app/ (_common
 import datetime as dt
 import hashlib
 import io
+import os
 import time
 from typing import Any
 
@@ -29,6 +30,7 @@ from routeopt.domain import HUB_TIMEZONE, hub_today
 from routeopt.ingest.census_geocoder import CensusGeocoder
 from routeopt.ingest.excel_loader import CANONICAL_COLUMNS, REQUIRED_COLUMNS
 from routeopt.pipeline import OptimizeJob, build_matrix, ingest, select_trucks
+from routeopt.refresh import RefreshError, fetch_query, to_xlsx
 from routeopt.travel import select_provider
 
 from _common import (
@@ -55,6 +57,47 @@ TIP = SETTING_TOOLTIPS
 # 1. Upload
 # ---------------------------------------------------------------------------------------
 st.subheader("1 · Upload the shipment workbook")
+CANDIDATES = "CA LFLT candidates (for New Run)"
+_root = Path(__file__).resolve().parents[2]
+with st.expander("…or get the candidates straight from Oracle", expanded=False):
+    _ready = (_root / "oracle.toml").exists()
+    if not _ready:
+        st.info(
+            "Needs `oracle.toml` (copy `oracle.toml.example` and fill it in) and the password "
+            "(`ORACLE_PASSWORD` in `.env`, or type it here)."
+        )
+    _pw = ""
+    if not os.environ.get("ORACLE_PASSWORD"):
+        _pw = st.text_input("Oracle password (this session only)", type="password", key="nr-pw")
+    st.caption(
+        "Runs the candidates query (day after tomorrow, Mondays after weekends; the "
+        "conditions are in `queries/ca_lflt_candidates.sql`) and uses the result as the "
+        "workbook. It can take a minute."
+    )
+    if st.button("Get candidates from Oracle", type="primary", disabled=not _ready, key="nr-get"):
+        try:
+            with st.spinner("Running the candidates query on Oracle…"):
+                _df = fetch_query(_root, CANDIDATES, password=_pw or None)
+        except RefreshError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}")
+        else:
+            if _df.empty:
+                st.warning("The query returned no candidates.")
+            else:
+                _data = to_xlsx(_df)
+                st.session_state.update(
+                    {
+                        "upload_bytes": _data,
+                        "upload_name": f"oracle_candidates_{dt.date.today():%Y%m%d}.xlsx",
+                        "upload_digest": hashlib.sha256(_data).hexdigest(),
+                        "mapping": {},
+                        "exclude_rows": set(),
+                    }
+                )
+                st.session_state.pop("ingest_cache", None)
+                st.success(f"Loaded {len(_df):,} candidate shipments from Oracle.")
 uploaded = st.file_uploader("Excel (.xlsx) or CSV with one row per shipment", type=["xlsx", "csv"])
 if uploaded is not None:
     data = uploaded.getvalue()

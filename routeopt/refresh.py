@@ -246,6 +246,34 @@ def refresh(
     return results
 
 
+def fetch_query(
+    root: Path,
+    name: str,
+    password: str | None = None,
+    connect: Connect | None = None,
+) -> pd.DataFrame:
+    """Run one query of queries.toml by name (enabled or not) and return the result as it
+    is, without storing it - for pages that use the rows directly (New Run)."""
+    spec = next((s for s in load_queries(root) if s.name == name), None)
+    if spec is None:
+        raise RefreshError(f"No query named '{name}' in queries.toml.")
+    login = load_login(root, password)
+    if not login.password:
+        raise RefreshError("No Oracle password: set ORACLE_PASSWORD in .env or enter it.")
+    return run_sql(connect or default_connect(), login, read_sql(root, spec), spec.params)
+
+
+def to_xlsx(df: pd.DataFrame) -> bytes:
+    """A query result as the .xlsx bytes an upload would be (dates as dates)."""
+    buf = io.BytesIO()
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[c]):
+            out[c] = out[c].dt.date
+    out.to_excel(buf, index=False)
+    return buf.getvalue()
+
+
 def _short(exc: Exception) -> str:
     text = str(exc).strip().splitlines()
     return f"{type(exc).__name__}: {text[0] if text else ''}"[:300]

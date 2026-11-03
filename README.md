@@ -194,6 +194,11 @@ failing query does not stop the others, and each query also has its own button.
    it once per session).
 3. `pip install oracledb` once (it is in the dependencies; thin mode, no Oracle Client).
 
+**New Run** has the same thing for the candidates: *…or get the candidates straight from
+Oracle* runs `queries/ca_lflt_candidates.sql` (the query named *CA LFLT candidates (for New
+Run)* in `queries.toml`; it works even while it is off for *Refresh all*) and uses the result
+as the workbook, so nothing has to be saved and uploaded.
+
 Query settings such as the start date are `params` in `queries.toml` (bind variables
 `:start_date` in the SQL).  Only SELECT statements are run.  In a team setup, the refresh
 button is on editor PCs only; viewers get the results through the shared branch.

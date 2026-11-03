@@ -246,3 +246,10 @@ def test_analyze_refresh_panel_shows_for_editors_not_viewers(
     st.cache_resource.clear()
     view = _run("pages/7_Analyze.py")
     assert not any(b.label == "Refresh all" for b in view.button)
+
+
+def test_new_run_has_the_oracle_candidates_button(db_env: Repository) -> None:
+    at = _run("pages/2_New_Run.py")
+    assert any(e.label.startswith("…or get the candidates") for e in at.expander)
+    btn = next(b for b in at.button if b.label == "Get candidates from Oracle")
+    assert btn.disabled  # no oracle.toml in the repository checkout

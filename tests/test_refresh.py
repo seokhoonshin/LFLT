@@ -244,3 +244,43 @@ def test_every_shipped_query_passes_the_select_guard() -> None:
         sql = read_sql(ROOT, spec)
         first = strip_comments(sql).lstrip().split(None, 1)[0].lower()
         assert first in ("with", "select"), spec.file
+
+
+CAND_COLS = [
+    "shipment_id", "purchase_order", "delivery_date", "order_type", "customer_name", "phone",
+    "address", "city", "state", "zip", "model_code", "pieces", "weight_lb", "volume_cuft",
+    "origin_dc", "pallet_required", "priority", "memo", "notes", "declared_value",
+    "bill_to_code", "REASON",
+]  # fmt: skip
+
+
+def _candidate_rows() -> list[tuple]:
+    day = dt.datetime(2026, 11, 5)
+    base = ("PO1", day, "LTL", "ACME", "9095551234", "100 MAIN ST", "RIALTO", "CA", "92376",
+            "M1", 2, 80.0, 40.0, "LGC2", "N", 2, "", None, 1.5, "BT1", "OK")  # fmt: skip
+    return [("3006000001", *base), ("3006000002", *base)]
+
+
+def test_the_candidates_query_result_loads_straight_into_new_run(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from routeopt.config import RunSettings
+    from routeopt.pipeline import ingest
+    from routeopt.refresh import fetch_query, to_xlsx
+
+    root = _project(tmp_path)
+    (root / "queries.toml").write_text(
+        (root / "queries.toml")
+        .read_text()
+        .replace('name = "cand"', 'name = "CA LFLT candidates (for New Run)"')
+    )
+    connect, _ = _connect({"CAND_TABLE": (CAND_COLS, _candidate_rows())})
+    df = fetch_query(root, "CA LFLT candidates (for New Run)", password="pw", connect=connect)
+    assert len(df) == 2 and "SHIPMENT_ID" in df.columns  # Oracle's column names, upper-cased
+    data = to_xlsx(df)
+    res = ingest(data, RunSettings(plan_date=dt.date(2026, 11, 5), geocode_mode="fill"))
+    assert not res.mapping_missing  # every required column was found by name
+    assert res.validation.rows_read == 2
+    assert {s.shipment_id for s in res.validation.shipments} <= {"3006000001", "3006000002"}
+    with pytest.raises(RefreshError, match="No query named"):
+        fetch_query(root, "nope", password="pw", connect=connect)
+    with pytest.raises(RefreshError, match="No Oracle password"):
+        fetch_query(root, "CA LFLT candidates (for New Run)", password=None, connect=connect)
