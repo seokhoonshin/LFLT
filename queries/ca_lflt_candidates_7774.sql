@@ -8,7 +8,7 @@
 -- ★ 이 버전은 Plan ID 7774 에 있는 Shipment 전부 (External URL2 에 REQ 가 있는 로드만 제외). 다른 제외 조건 없음
 --   주소 없음·CA/NV/AZ 밖·TMS 미등록 건은 빼지 않고 ADDR_FLAG 컬럼에 표시 (RouteOpt 업로드 검증에서 걸림)
 -- Plan ID 7774 는 고객·PoC·Plan type·서비스·Plan group·거리·볼륨 조건과 관계없이 전부 대상
---   (TMS 미등록·REQ 요청 완료·주소 없음·CA/NV/AZ 밖 은 그대로 제외)
+--   (REQ 요청 완료 로드만 제외. TMS 미등록·주소 없음·CA/NV/AZ 밖은 ADDR_FLAG 로 표시만)
 -- declared_value = TMS_PROD.SHPM_T.DCLD_VAL_DLR (Shipment 단위. 로드에 실린 Shipment 합계 = LD_LEG_T.DCLD_VAL_DLR)
 -- [기간 제한 없음 · 속도 개선 버전] 현재 미배정·Open 건만 인덱스로 먼저 찾고, 중간 결과를 한 번만 계산(MATERIALIZE)
 -- 실행: DBeaver에서 전체 선택(Ctrl + A) 후 Ctrl + Enter
