@@ -5,7 +5,8 @@
 -- MJ-WEST PoC 기준: PoC에 있는 Ship-to는 LFLT? = Y 만 대상(N·미기재·Compliance 제외), PoC에 없는 Ship-to는 다른 조건대로
 -- Plan type COMPLIANCE·DEDICATED_INTERNAL 제외. RDD는 판단에 쓰지 않음 (표시만)
 -- Appointment 요청한 로드(LD_LEG_T.EXTL_URL2 에 REQ) 는 전부 제외 → 남은 건만 다시 최적화
--- ★ 이 버전은 Plan ID 7774 에 있는 Shipment 만 읽음 (나머지 조건은 일반 후보 쿼리와 같음)
+-- ★ 이 버전은 Plan ID 7774 에 있는 Shipment 전부 (External URL2 에 REQ 가 있는 로드만 제외). 다른 제외 조건 없음
+--   주소 없음·CA/NV/AZ 밖·TMS 미등록 건은 빼지 않고 ADDR_FLAG 컬럼에 표시 (RouteOpt 업로드 검증에서 걸림)
 -- Plan ID 7774 는 고객·PoC·Plan type·서비스·Plan group·거리·볼륨 조건과 관계없이 전부 대상
 --   (TMS 미등록·REQ 요청 완료·주소 없음·CA/NV/AZ 밖 은 그대로 제외)
 -- declared_value = TMS_PROD.SHPM_T.DCLD_VAL_DLR (Shipment 단위. 로드에 실린 Shipment 합계 = LD_LEG_T.DCLD_VAL_DLR)
@@ -327,10 +328,8 @@ dist AS (
 e AS (
     SELECT g.*, dist.MED_MILES, dist.HIST_LOADS,
            CASE
-             WHEN g.BUCKET = 'A_NOT_IN_TMS'                                       THEN 'NOT_IN_TMS'
-             WHEN REGEXP_LIKE(UPPER(g.EXT_URL2), '(^|[^A-Z])REQ([^A-Z]|$)')       THEN 'APPT_REQUESTED'  -- 요청한 로드
-             WHEN g.ADDR IS NULL OR g.CITY IS NULL OR g.ZIP5 IS NULL              THEN 'NO_ADDRESS'
-             WHEN NVL(g.STATE, 'X') NOT IN ('CA', 'NV', 'AZ')                     THEN 'OUT_OF_AREA'
+             WHEN REGEXP_LIKE(UPPER(g.EXT_URL2), '(^|[^A-Z])REQ([^A-Z]|$)')       THEN 'APPT_REQUESTED'  -- ★ REQ 로드만 제외
+             -- Plan 7774 는 REQ 말고는 아무것도 제외하지 않음 (주소 없음·CA/NV/AZ 밖·TMS 미등록도 ADDR_FLAG 로 표시만)
              WHEN g.PLAN_ID = '7774'                                              THEN 'OK'          -- Plan 7774: 나머지 조건 무시
              WHEN REGEXP_LIKE(g.ALL_NAMES, '(^|[^A-Z])OBS([^A-Z]|$)')             THEN 'OBS'
              WHEN REGEXP_LIKE(g.ALL_NAMES, 'BEST\s*BUY')                          THEN 'BEST_BUY'    -- LFLT 불가 고객
@@ -401,6 +400,9 @@ SELECT r.SHPM_NUM                                              AS "shipment_id",
        CASE WHEN r.REQ_DAYS <> 'ANY'
              AND INSTR(r.REQ_DAYS, TO_CHAR(r.DLV_DATE, 'DY', 'NLS_DATE_LANGUAGE=ENGLISH')) = 0
             THEN 'REQ_DAY_MISMATCH' END                         AS REQ_DAY_FLAG,
+       CASE WHEN r.BUCKET = 'A_NOT_IN_TMS' THEN 'NOT_IN_TMS'
+            WHEN r.ADDR IS NULL OR r.CITY IS NULL OR r.ZIP5 IS NULL THEN 'NO_ADDRESS'
+            WHEN NVL(r.STATE, 'X') NOT IN ('CA', 'NV', 'AZ') THEN 'OUT_OF_AREA' END AS ADDR_FLAG,
        r.RDD_TIMING, r.RDD_GAP_DAYS, r.RDD_FROM, r.RDD_TO, r.PLAN_ID, r.PLAN_ID_GRP, r.PLAN_ID_TYP,
        r.LOAD_DATE,
        CASE WHEN r.BUCKET = 'B_OPEN' AND r.LOAD_DATE IS NULL THEN 'LOAD_DATE_UNSET'
