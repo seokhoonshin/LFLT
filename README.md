@@ -197,7 +197,8 @@ failing query does not stop the others, and each query also has its own button.
 **New Run** has the same thing for the candidates: *…or get the candidates straight from
 Oracle* runs `queries/ca_lflt_candidates.sql` (the query named *CA LFLT candidates (for New
 Run)* in `queries.toml`; it works even while it is off for *Refresh all*) and uses the result
-as the workbook, so nothing has to be saved and uploaded.
+as the workbook, so nothing has to be saved and uploaded.  Choose *Plan 7774 only* to
+get just the shipments of Plan ID 7774 (`queries/ca_lflt_candidates_7774.sql`, same rules).
 
 Query settings such as the start date are `params` in `queries.toml` (bind variables
 `:start_date` in the SQL).  Only SELECT statements are run.  In a team setup, the refresh

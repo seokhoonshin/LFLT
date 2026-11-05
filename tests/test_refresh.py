@@ -207,7 +207,7 @@ def test_login_file_checks(tmp_path, monkeypatch) -> None:  # type: ignore[no-un
 
 def test_the_shipped_queries_toml_is_valid() -> None:
     specs = load_queries(ROOT)
-    assert [s.target for s in specs] == ["analyze.performance", "analyze.aging", "file"]
+    assert [s.target for s in specs] == ["analyze.performance", "analyze.aging", "file", "file"]
     for s in specs:
         read_sql(ROOT, s)  # every file exists and every :bind has a param
 

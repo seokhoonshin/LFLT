@@ -22,3 +22,10 @@ file = "queries/ca_lflt_candidates.sql"
 target = "file"
 output = "ca_lflt_candidates.xlsx"
 enabled = false   # set true to refresh it with the others (or run it alone with its own button)
+
+[[query]]
+name = "CA LFLT candidates - Plan 7774 only (for New Run)"
+file = "queries/ca_lflt_candidates_7774.sql"
+target = "file"
+output = "ca_lflt_candidates_7774.xlsx"
+enabled = false

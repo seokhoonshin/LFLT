@@ -58,6 +58,7 @@ TIP = SETTING_TOOLTIPS
 # ---------------------------------------------------------------------------------------
 st.subheader("1 · Upload the shipment workbook")
 CANDIDATES = "CA LFLT candidates (for New Run)"
+CANDIDATES_7774 = "CA LFLT candidates - Plan 7774 only (for New Run)"
 _root = Path(__file__).resolve().parents[2]
 with st.expander("…or get the candidates straight from Oracle", expanded=False):
     _ready = (_root / "oracle.toml").exists()
@@ -74,10 +75,22 @@ with st.expander("…or get the candidates straight from Oracle", expanded=False
         "conditions are in `queries/ca_lflt_candidates.sql`) and uses the result as the "
         "workbook. It can take a minute."
     )
+    _which = st.radio(
+        "Which candidates",
+        ["All candidates", "Plan 7774 only"],
+        horizontal=True,
+        key="nr-which",
+        help="Plan 7774 only: just the shipments that sit in Plan ID 7774 "
+        "(`queries/ca_lflt_candidates_7774.sql`).",
+    )
     if st.button("Get candidates from Oracle", type="primary", disabled=not _ready, key="nr-get"):
         try:
             with st.spinner("Running the candidates query on Oracle…"):
-                _df = fetch_query(_root, CANDIDATES, password=_pw or None)
+                _df = fetch_query(
+                    _root,
+                    CANDIDATES_7774 if _which == "Plan 7774 only" else CANDIDATES,
+                    password=_pw or None,
+                )
         except RefreshError as exc:
             st.error(str(exc))
         except Exception as exc:
@@ -92,7 +105,7 @@ with st.expander("…or get the candidates straight from Oracle", expanded=False
                         "upload_bytes": _data,
                         "upload_name": f"oracle_candidates_{dt.datetime.now():%Y%m%d_%H%M%S}.xlsx",
                         "upload_digest": hashlib.sha256(_data).hexdigest(),
-                        "upload_source": f"Oracle, fetched {dt.datetime.now():%H:%M:%S}",
+                        "upload_source": f"Oracle ({_which}), fetched {dt.datetime.now():%H:%M:%S}",
                         "mapping": {},
                         "exclude_rows": set(),
                     }
