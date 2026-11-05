@@ -250,8 +250,7 @@ u AS (
     LEFT   JOIN sv    ON sv.SHPM_NUM = c.SHIPMENTNUMBER
     WHERE  (b.SHPM_NUM IS NULL                                            -- TMS 미등록 (사유 표시 후 제외)
        OR  sb.GRP = 'UNASSIGNED'                                          -- 미배정
-       OR  (sa.GRP = 'OPEN' AND (a.SRVC_CD IN (SELECT S FROM svc)         -- Open 로드
-                                 OR a.SRVC_CD IS NULL)))                  --   서비스 미정 Open 로드 포함
+       OR  sa.GRP = 'OPEN')                                               -- Open 로드 (서비스 무관: Plan 7774 는 전부)
       AND  TRIM(COALESCE(TO_CHAR(b.PLAN_ID), TO_CHAR(c.SYSTEMPLANID))) = '7774'   -- ★ Plan ID 7774 만
 ),
 -- 3) 주소 표준화 ①: 도로 종류(ROAD, AVE …) 뒤의 건물·도어·매장번호 등을 잘라냄
