@@ -186,7 +186,7 @@ sv AS (                                -- Shipment 단위 Declared value, Bill-t
 -- 2) 구간이 2개인 Shipment는 우리 DC에서 출발하는 구간을 우선
 b AS (
     SELECT /*+ MATERIALIZE INDEX(t LD_LEG_DETL_I8) */ t.SHPM_NUM, t.LD_LEG_ID, t.SRVC_CD, t.CUR_OPTLSTAT_ID, t.TO_SHPG_LOC_CD,
-           t.CUST_NAME, t.TO_STA_CD, t.TO_CTY_NAME, t.TO_PSTL_CD, t.PLAN_ID,
+           t.CUST_NAME, t.TO_SHPG_LOC_NAME, t.TO_STA_CD, t.TO_CTY_NAME, t.TO_PSTL_CD, t.PLAN_ID,
            ROW_NUMBER() OVER (PARTITION BY t.SHPM_NUM
                               ORDER BY CASE WHEN t.FRM_SHPG_LOC_CD IN ('LGC2', 'LGC7', 'LGC8') THEN 0 ELSE 1 END,
                                        t.UPDT_DTT DESC NULLS LAST, t.LD_LEG_ID DESC NULLS LAST) rn
@@ -210,6 +210,7 @@ u AS (
            c.SHIPFROMLOCATIONCODE                               AS DC,
            NVL(c.SHIPTOLOCATIONCODE, b.TO_SHPG_LOC_CD)          AS TO_CD,
            COALESCE(c.SHIPTODESCRIPTION, b.CUST_NAME, c.CUSTOMER_DESC) AS CUST_NAME,
+           b.TO_SHPG_LOC_NAME                                   AS STOP_NAME,   -- Stop Location Name (받는 곳 이름)
            UPPER(c.SHIPTODESCRIPTION || ' ' || b.CUST_NAME || ' ' || c.CUSTOMER_DESC) AS ALL_NAMES,
            TRIM(c.STREET)                                       AS ORIG_ADDR,
            UPPER(REGEXP_REPLACE(TRIM(c.STREET), '\s+', ' '))    AS RAW_ADDR,
@@ -394,6 +395,13 @@ SELECT r.SHPM_NUM                                              AS "shipment_id",
        ROUND(r.DCLD_VAL, 2)                                    AS "declared_value", -- SHPM_T Shipment 값
        r.BILLTO                                                AS "bill_to_code",   -- Appointments 화면에 표시
        -- 참고 컬럼 (RouteOpt는 무시함)
+       r.STOP_NAME                                              AS STOP_NAME,       -- 도착지 이름 (TMS Stop Location Name)
+       CASE WHEN REGEXP_LIKE(UPPER(r.STOP_NAME), '(\s|^)(INC|LLC|CO|CORP|CORPORATION|COMPANY|LTD|LP|GROUP|SUPPLY|APPLIANCES?|DISTRIB\w*|WHOLESALE|WAREHOUSE|WHSE|MDO|3PL|DC|DDC|RDC|ADC|BDC|HUB|STORES?|CENTER|CENTRE|DEPOT|SERVICES?|ELECTRIC\w*|HVAC|AIR|HEATING|PLUMBING|HOME|HOMES|FURNITURE|LOGISTICS|TERMINAL|BUILDERS?|CONSTRUCTION|DEVELOPMENT|KITCHENS?|BATHS?|DESIGN|GALLERY|INTERNATIONAL|ENTERPRISES?|SOLUTIONS|TECHNOLOG\w*|SYSTEMS?|PRODUCTS?|INDUSTRIES|ASSOCIATES|PARTNERS|HQ|CITY|COUNTY|SCHOOL|HOSPITAL|CHURCH|FINANCIAL|ADMIN|BANK|INSURANCE|CAPITAL|HOLDINGS|PROPERTIES|REALTY|MANAGEMENT|MGMT|OFFICE|STUDIO|CLINIC|DENTAL|LAW|SALON|RESTAURANT|CAFE|HOTEL|APARTMENTS?|CONDOS?|HOA)(\s|$)')
+              OR REGEXP_LIKE(r.STOP_NAME, '[0-9#&]')                               THEN 'N'      -- 업체·물류센터 이름
+            WHEN REGEXP_LIKE(TRIM(r.STOP_NAME), '^[A-Za-z''.-]+( [A-Za-z''.-]+){1,2}$') THEN 'Y'      -- 사람 이름 (2~3단어)
+            WHEN UPPER(r.TO_CD) LIKE '%DROP%'
+              OR REGEXP_LIKE(r.RAW_ADDR, '(\s(APT|UNIT)\b|#)')                     THEN 'MAYBE'  -- 개인배송용 Ship-to 코드 / 호수 표시
+            ELSE 'N' END                                        AS RESIDENTIAL,     -- Y 주거지(사람 이름) / MAYBE 추정 / N
        r.ORIG_ADDR, r.HQ, r.PALLET_REASON,
        CASE WHEN r.POC_LFLT_OK = 'Y' THEN 'PoC Y' ELSE 'Not in PoC' END AS POC_STATUS, r.REQ_DAYS,
        CASE WHEN r.REQ_DAYS <> 'ANY'
