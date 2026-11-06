@@ -208,7 +208,8 @@ button is on editor PCs only; viewers get the results through the shared branch.
 at an address the load already has joins it; *Save* also joins same-address stops), and after
 every *Save* / added stop the stops are numbered 1..n and *Miles from prev* is worked out
 again (warehouse -> stop 1 -> stop 2 ...; the run's road distances for its own stops, a lookup
-of the address for a stop typed in by hand). Status **Customer order cancel** takes a
+of the address for a stop typed in by hand). A shipment added by hand can be taken off again (*Remove shipments added by hand from T..*).
+Status **Customer order cancel** takes a
 shipment off the truck: it is left out of the stop volume, the exports and the Finalized tab,
 and is not counted as a decline on Analyze (a stop with all its shipments cancelled is left
 out like a declined one).

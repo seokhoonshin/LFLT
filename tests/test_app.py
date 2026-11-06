@@ -283,3 +283,23 @@ def test_appointments_same_address_joins_and_save_recomputes_miles(db_env: Repos
         assert not ap.exception, ap.exception
         after = [r for r in db_env.list_appointments() if r["truck"] == truck]
         assert any(r["miles_from_prev"] > 0 for r in after)
+
+
+def test_appointments_remove_shipments_added_by_hand(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    res = _run("pages/3_Results.py", run_id)
+    next(b for b in res.button if b.label == "Select this truck").click().run()
+    ap = _run("pages/6_Appointments.py")
+    before = len(db_env.list_appointments())
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("HAND1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Walk-in Co")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input("1 Test St, Rialto")
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert len(db_env.list_appointments()) == before + 1
+    pick = next(m for m in ap.multiselect if m.label == "Shipments to remove")
+    assert len(pick.options) == 1 and "HAND1" in pick.options[0]
+    pick.set_value([pick.options[0]]).run()
+    next(b for b in ap.button if b.label == "Remove 1 shipment(s)").click().run()
+    assert not ap.exception, ap.exception
+    assert len(db_env.list_appointments()) == before
+    assert not any(r["shipment_id"] == "HAND1" for r in db_env.list_appointments())

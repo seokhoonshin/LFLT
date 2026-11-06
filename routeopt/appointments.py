@@ -330,6 +330,15 @@ def export_stops_by_load(
     return buf.getvalue()
 
 
+def is_manual(row: dict[str, Any]) -> bool:
+    """A shipment added to a load by hand (Add a stop by hand): its stop id starts with M-
+    (typed in, not in the upload) or its note still says so."""
+    return (
+        str(row.get("stop_id") or "").startswith("M-")
+        or "added manually" in str(row.get("note") or "").lower()
+    )
+
+
 _ADDR_NOISE = {"USA", "US", "CA", "NV", "AZ"}  # country / the states the plans run in
 
 

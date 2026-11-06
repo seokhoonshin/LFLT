@@ -28,6 +28,7 @@ from routeopt.appointments import (
     export_stops_by_load,
     finalized_rows,
     group_by_stop,
+    is_manual,
     load_sheet_rows,
     manual_rows,
     origin_label,
@@ -417,6 +418,35 @@ def load_tools(
             load_map(run_id, [r for r in items if r["load_seq"] == load_seq])
 
 
+def remove_manual_form(stage: str, run_id: str, truck: str, items: list[dict]) -> None:
+    """Take shipments that were added by hand off the truck again."""
+    manual = [r for r in items if is_manual(r) and r["stop_seq"] < 900]
+    if not manual:
+        st.caption("No shipment was added by hand to this truck.")
+        return
+    labels = {
+        f"Load {r['load_seq']} · stop {r['stop_seq'] + 1} · {r['shipment_id']} · "
+        f"{r['customer']} · {r['address']}": r["id"]
+        for r in manual
+    }
+    st.caption(
+        "Removes the chosen shipments from this tab's truck (a stop with no shipment left "
+        "goes too); the stops are numbered again and Miles from prev is worked out again."
+    )
+    chosen = st.multiselect(
+        "Shipments to remove", list(labels), key=f"rm-manual-{stage}-{run_id}-{truck}"
+    )
+    if st.button(
+        f"Remove {len(chosen)} shipment(s)",
+        key=f"rm-manual-btn-{stage}-{run_id}-{truck}",
+        disabled=not chosen,
+    ):
+        n = repo.delete_appointment_rows([labels[c] for c in chosen], stage)
+        tidy_truck(run_id, truck, stage)
+        st.toast(f"{truck}: {n} shipment(s) taken off.")
+        st.rerun()
+
+
 def remove_form(run_id: str, truck: str, items: list[dict]) -> None:
     """Take stops out of the re-plan (the Original tab keeps them as the record)."""
     stops = [s for s in group_by_stop(items) if s["stop_seq"] < 900]
@@ -556,6 +586,8 @@ def render(stage_rows: list[dict], stage: str) -> None:
         load_tools(stage, stage_rows, run_id, truck, items, load_seqs)
         with st.expander(f"Add a stop to {truck} by hand"):
             add_form(stage, run_id, truck, items, load_seqs)
+        with st.expander(f"Remove shipments added by hand from {truck}"):
+            remove_manual_form(stage, run_id, truck, items)
         if stage == "reoptimized":
             with st.expander(f"Remove stops from {truck} (re-plan only)"):
                 remove_form(run_id, truck, items)

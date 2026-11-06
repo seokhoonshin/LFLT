@@ -730,15 +730,14 @@ class Repository:
             return int(result.rowcount or 0)
 
     def delete_appointment_rows(self, ids: list[int], stage: str = "reoptimized") -> int:
-        """Remove rows of one stage by id (used to take stops out of a re-plan; the
-        original set is the record and is never edited this way).  Returns rows removed."""
+        """Remove rows of one stage by id (a re-plan's stops, or shipments added by hand).
+        Returns rows removed."""
         if not ids:
             return 0
+        in_stage = self._original() if stage == "original" else AppointmentRow.stage == stage
         with self._sf() as session, session.begin():
             result = session.execute(
-                delete(AppointmentRow).where(
-                    AppointmentRow.id.in_([int(i) for i in ids]), AppointmentRow.stage == stage
-                )
+                delete(AppointmentRow).where(AppointmentRow.id.in_([int(i) for i in ids]), in_stage)
             )
             return int(result.rowcount or 0)
 
