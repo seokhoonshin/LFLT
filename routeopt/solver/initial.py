@@ -13,6 +13,7 @@ import math
 
 from routeopt.config import RunSettings
 from routeopt.domain import HUB_LAT, HUB_LON, Stop, TruckConfig
+from routeopt.solver.model_builder import VehicleSlot, vehicle_layout
 from routeopt.solver.plan_validator import check_truck
 from routeopt.solver.timeline import RouteSkeleton, build_truck, node_index_map
 from routeopt.travel.base import Matrix
@@ -51,34 +52,49 @@ def greedy_routes(
     matrix: Matrix,
     settings: RunSettings,
     trucks: list[TruckConfig],
+    slots: list[VehicleSlot] | None = None,
 ) -> list[list[int]]:
-    """Return one node list per virtual vehicle (truck-major, slot-minor)."""
+    """Return one node list per virtual vehicle (see :func:`vehicle_layout`).
+
+    Each load takes stops of one site only (the first site in sweep order that still has
+    a stop that fits) and runs on that site's vehicle, a pallet-trip vehicle when one of
+    its stops needs a pallet.
+    """
     k_slots = settings.max_loads_per_truck
+    slots = slots if slots is not None else vehicle_layout(stops, settings, len(trucks))
+    vehicle = {(s.truck_index, s.slot, s.site, s.pallet): s.vehicle for s in slots}
+    has_pallet_trips = any(s.pallet for s in slots)
     stops_by_id = {s.stop_id: s for s in stops}
     node_of = node_index_map(stops)
     remaining = sweep_order(stops)
-    routes: list[list[int]] = [[] for _ in range(len(trucks) * k_slots)]
-    truck_loads: dict[int, list[list[str]]] = {}
+    routes: list[list[int]] = [[] for _ in slots]
     for t_idx, truck in enumerate(trucks):
         if not remaining:
             break
         loads: list[list[str]] = []
-        truck_loads[t_idx] = loads
         for _slot in range(k_slots):
             current: list[str] = []
             loads.append(current)
-            leftovers: list[Stop] = []
-            for stop in remaining:
-                current.append(stop.stop_id)
-                if not _feasible(truck, loads, stops_by_id, matrix, node_of, settings):
-                    current.pop()
-                    leftovers.append(stop)
-            remaining = leftovers
+            for site in dict.fromkeys(s.site for s in remaining):
+                leftovers: list[Stop] = []
+                for stop in remaining:
+                    if stop.site != site:
+                        leftovers.append(stop)
+                        continue
+                    current.append(stop.stop_id)
+                    if not _feasible(truck, loads, stops_by_id, matrix, node_of, settings):
+                        current.pop()
+                        leftovers.append(stop)
+                remaining = leftovers
+                if current:
+                    break
             if not current:
                 loads.pop()
                 break
             if not remaining:
                 break
-        for k, load in enumerate(loads):
-            routes[t_idx * k_slots + k] = [node_of[sid] for sid in load]
+        for k, load in enumerate(loads, start=1):
+            pallet = has_pallet_trips and any(stops_by_id[sid].pallet for sid in load)
+            v = vehicle[(t_idx, k, stops_by_id[load[0]].site, pallet)]
+            routes[v] = [node_of[sid] for sid in load]
     return routes

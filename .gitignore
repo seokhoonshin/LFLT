@@ -14,3 +14,6 @@ docker/osrm/data/
 *.egg-info/
 build/
 dist/
+
+oracle.toml
+data/refresh/

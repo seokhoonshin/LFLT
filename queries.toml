@@ -1,0 +1,31 @@
+# Queries the Refresh button runs against Oracle (see oracle.toml.example for the login).
+# One [[query]] per query.  target decides where the result goes:
+#   analyze.performance  -> Analyze > LFLT performance (adds up; a load is replaced by its latest values)
+#   analyze.aging        -> Analyze > LFLT Aging (one snapshot per AS_OF day)
+#   file                 -> saved as an Excel file in data/refresh/ (e.g. the New Run candidates)
+# params are bind variables (:name) in the SQL; change them here, in one place.
+
+[[query]]
+name = "LFLT performance"
+file = "queries/lflt_performance.sql"
+target = "analyze.performance"
+params = { start_date = "2026-01-01" }
+
+[[query]]
+name = "LFLT Aging"
+file = "queries/lflt_aging_summary.sql"
+target = "analyze.aging"
+
+[[query]]
+name = "CA LFLT candidates (for New Run)"
+file = "queries/ca_lflt_candidates.sql"
+target = "file"
+output = "ca_lflt_candidates.xlsx"
+enabled = false   # set true to refresh it with the others (or run it alone with its own button)
+
+[[query]]
+name = "CA LFLT candidates - Plan 7774 only (for New Run)"
+file = "queries/ca_lflt_candidates_7774.sql"
+target = "file"
+output = "ca_lflt_candidates_7774.xlsx"
+enabled = false

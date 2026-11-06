@@ -15,12 +15,23 @@ from typing import Any, Literal, Protocol
 from dateutil import parser as dateparser
 
 from routeopt.config import RunSettings
-from routeopt.domain import HUB_LAT, HUB_LON, DayTag, OrderType, Shipment, ShipmentType
+from routeopt.domain import (
+    DC_TO_SITE,
+    HUB_LAT,
+    HUB_LON,
+    DayTag,
+    OrderType,
+    Shipment,
+    ShipmentType,
+    site_for_dc,
+)
 from routeopt.ingest.excel_loader import RawRow, excel_serial_to_date
 
 Severity = Literal["error", "warning"]
 
 _SUFFIX_RE = re.compile(r"_(LMD|RTN|INC)\s*$", re.IGNORECASE)
+_PRODUCT_GROUP_RE = re.compile(r"[A-Z]{2,4}")
+NO_PALLET_GROUP = "HA"  # CA LFLT: HA ships without a pallet; AC, ES, BS, MS, ... need one
 _WS_RE = re.compile(r"\s+")
 
 
@@ -226,7 +237,19 @@ def validate_rows(
     for raw in rows:
         n = raw.row_number
         if n in exclude_rows:
-            excluded.append(RowIssue(n, "Excluded by the planner.", "warning"))
+            addr = ", ".join(
+                str(raw.get(k)).strip() for k in ("address", "city", "zip") if raw.get(k)
+            )
+            excluded.append(
+                RowIssue(
+                    n,
+                    f"Skipped: you chose to exclude it (address could not be placed: {addr}). "
+                    "Fix the address or add latitude/longitude and upload the file again.",
+                    "warning",
+                    shipment_id=str(raw.get("shipment_id") or "") or None,
+                    field="address",
+                )
+            )
             continue
         row_errors: list[RowIssue] = []
 
@@ -250,10 +273,12 @@ def validate_rows(
 
         m = _SUFFIX_RE.search(sid)
         stype: ShipmentType | None = None
-        if not m:
+        if m:
+            stype = ShipmentType(m.group(1).upper())
+        elif settings.require_shipment_suffix:
             err("Shipment ID must end with _LMD, _RTN or _INC.", "shipment_id")
         else:
-            stype = ShipmentType(m.group(1).upper())
+            stype = ShipmentType.LMD  # CA LFLT ids carry no suffix: every row is a delivery
         if sid.upper() in seen_ids:
             err(f"Duplicate shipment ID (also on row {seen_ids[sid.upper()]}).", "shipment_id")
         else:
@@ -316,12 +341,56 @@ def validate_rows(
                 f"Service minutes '{raw.get('service_minutes')}' is not a whole number.",
                 "service_minutes",
             )
+        computed_service = settings.unload_minutes_per_cuft is not None
+        if service is None and computed_service:
+            service = 0  # unloading is computed per stop from the volume
         if service is None and not any(e.field == "service_minutes" for e in row_errors):
             err("Service minutes is missing.", "service_minutes")
         elif service is not None and service < 0:
             err("Service minutes cannot be negative.", "service_minutes")
 
         model_code = parse_str(raw.get("model_code"))
+        strict = settings.profile == "legacy"
+        if not strict:  # CA LFLT files carry no model / weight / pieces detail
+            pieces = 1 if pieces is None else pieces
+            weight = 0.0 if weight is None else weight
+            model_code = model_code or "-"
+
+        origin_dc = parse_str(raw.get("origin_dc"))
+        site = site_for_dc(origin_dc)
+        if site is None:
+            known = ", ".join(sorted(DC_TO_SITE))
+            err(f"Unknown DC '{origin_dc}' (use {known}).", "origin_dc")
+        pallet = False
+        pallet_text = parse_str(raw.get("pallet_required"))
+        if pallet_text is not None:
+            flag = pallet_text.strip().upper()
+            if flag in ("Y", "YES", "TRUE", "1"):
+                pallet = True
+            elif flag in ("N", "NO", "FALSE", "0"):
+                pallet = False
+            elif _PRODUCT_GROUP_RE.fullmatch(flag):
+                # a product group code: HA ships without a pallet, every other group
+                # (AC, ES, BS, MS, ...) needs one
+                pallet = flag != NO_PALLET_GROUP
+            else:
+                err(
+                    f"Pallet required '{pallet_text}' must be Y / N or a product group "
+                    "(HA = no pallet, others = pallet).",
+                    "pallet_required",
+                )
+        priority: int | None = None
+        try:
+            priority = parse_int(raw.get("priority"))
+        except ValueError:
+            err(f"Priority '{raw.get('priority')}' must be 1, 2 or 3.", "priority")
+        if priority is not None and priority not in (1, 2, 3):
+            err(f"Priority {priority} must be 1, 2 or 3.", "priority")
+            priority = None
+        notes = parse_str(raw.get("notes"))
+        memo = parse_str(raw.get("memo"))
+        if memo:
+            notes = f"{notes} | {memo}" if notes else memo
 
         def has_error(fld: str, _e: list[RowIssue] = row_errors) -> bool:
             return any(e.field == fld for e in _e)
@@ -337,9 +406,13 @@ def validate_rows(
                     err("Volume is missing.", "volume_cuft")
             elif volume < 0:
                 err("Volume cannot be negative.", "volume_cuft")
-            elif volume > settings.truck_volume_cuft:
+            elif settings.volume_exceeds(volume, pallet):
+                cap = settings.load_cap_cuft(pallet)
+                limit = f"less than {cap:g}" if settings.volume_strict else f"{cap:g}"
                 err(
-                    f"Volume {volume:g} cu ft is larger than one truck ({settings.truck_volume_cuft:g} cu ft).",
+                    f"Volume {volume:g} cu ft is larger than one truck ({limit} cu ft"
+                    + (" with a pallet" if pallet and cap != settings.truck_volume_cuft else "")
+                    + ").",
                     "volume_cuft",
                 )
             if weight is None:
@@ -445,8 +518,16 @@ def validate_rows(
                 "weight_lb": float(weight or 0.0),
                 "volume_cuft": float(volume or 0.0),
                 "service_minutes": int(service or 0),
-                "notes": parse_str(raw.get("notes")),
+                "notes": notes,
                 "source_row": n,
+                "origin_dc": origin_dc.upper() if origin_dc else None,
+                "site": site,
+                "pallet_required": pallet,
+                "priority": priority,
+                "declared_value": float(parse_float(raw.get("declared_value")) or 0.0),
+                "bill_to_code": str(raw.get("bill_to_code")).strip()
+                if raw.get("bill_to_code") not in (None, "")
+                else None,
             }
         )
 
@@ -456,6 +537,9 @@ def validate_rows(
     geocoded_rows: list[int] = []
     geocode_failures: list[RowIssue] = []
     missing = [p for p in parsed if p["latitude"] is None]
+    if settings.geocode_mode == "address" and geocoder is not None:
+        # every row is placed by its street address; file coordinates are only a fallback
+        missing = list(parsed)
     if missing:
         if geocoder is None:
             for p in missing:
@@ -482,6 +566,17 @@ def validate_rows(
                 if res and res.matched:
                     p["latitude"], p["longitude"] = res.latitude, res.longitude
                     geocoded_rows.append(p["source_row"])
+                elif p["latitude"] is not None:
+                    warnings.append(
+                        RowIssue(
+                            p["source_row"],
+                            f"Address could not be geocoded: {p['address']}, {p['city']}, {p['state']} "
+                            f"{p['zip']}; using the latitude/longitude from the file.",
+                            "warning",
+                            p["shipment_id"],
+                            "address",
+                        )
+                    )
                 else:
                     geocode_failures.append(
                         RowIssue(

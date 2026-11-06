@@ -65,7 +65,15 @@ def test_excel_export_sheets_and_round_trip(solved: OptimizeResult, tmp_path: Pa
     )
     assert path.name == f"routeopt_{plan.plan_date.isoformat()}_{plan.run_id}_v0.xlsx"
     wb = load_workbook(path)
-    assert wb.sheetnames == ["Summary", "Routes", "Stops", "Unassigned", "Trucks", "Settings"]
+    assert wb.sheetnames == [
+        "Summary",
+        "Load Summary",
+        "Routes",
+        "Stops",
+        "Unassigned",
+        "Trucks",
+        "Settings",
+    ]
     routes = wb["Routes"]
     assert [c.value for c in routes[1]] == ROUTES_COLUMNS
     served_shipments = [

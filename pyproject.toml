@@ -21,6 +21,7 @@ dependencies = [
     "numpy>=2.0,<3",
     "python-dateutil>=2.9,<3",
     "tzdata>=2024.1",  # IANA zone database for HUB_TIMEZONE (not bundled on Windows)
+    "oracledb>=2.0,<4",  # the Refresh button (thin mode: no Oracle Client needed)
 ]
 
 [project.optional-dependencies]

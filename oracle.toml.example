@@ -1,0 +1,9 @@
+# Copy to oracle.toml (it is git-ignored) and fill in.  A read-only account is enough.
+# The password is better kept out of the file: set ORACLE_PASSWORD in .env (or the Windows
+# environment); if neither is set the Refresh button asks for it once per session.
+[oracle]
+host = "xxx"
+port = 1521
+service_name = "xxxxxxx"
+username = "xxxxxx"
+password = ""   # optional: leave empty and use ORACLE_PASSWORD

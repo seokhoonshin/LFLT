@@ -14,7 +14,7 @@ import pytest
 from routeopt.cli import format_plan
 from routeopt.cli import main as cli_main
 from routeopt.config import RunSettings
-from routeopt.domain import DayTag, LunchInfo, Plan, Stop
+from routeopt.domain import N_DEPOTS, DayTag, LunchInfo, Plan, Stop
 from routeopt.ingest.consolidate import consolidate
 from routeopt.pipeline import OptimizeJob, default_trucks, optimize, scope_stops
 from routeopt.solver.extract import rebuild_plan_trucks
@@ -332,9 +332,10 @@ def test_scope_stops_restricts_matrix() -> None:
     stops = renumber(make_stops(2, prefix="D") + make_stops(2, prefix="E", day_offset=1))
     matrix = _matrix(stops)
     kept, sub, excluded = scope_stops(stops, matrix, make_settings(pull_forward_days=[]))
-    assert [s.stop_id for s in kept] == ["S001", "S002"] and sub.n == 3
+    assert [s.stop_id for s in kept] == ["S001", "S002"] and sub.n == N_DEPOTS + 2
     assert [e.stop_id for e in excluded] == ["S003", "S004"]
-    assert sub.durations_s[1][2] == matrix.durations_s[1][2]
+    a, b = N_DEPOTS, N_DEPOTS + 1  # the two kept stops
+    assert sub.durations_s[a][b] == matrix.durations_s[a][b]
 
 
 def test_rebuild_plan_trucks_recomputes_after_structural_change() -> None:

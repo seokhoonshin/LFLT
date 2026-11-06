@@ -96,3 +96,212 @@ def test_results_edit_history_pages(db_env: Repository) -> None:
     assert any(run_id in t.value for t in at2.title)
     at3 = _run("pages/5_History.py", run_id)
     assert at3.title[0].value == "History"
+
+
+def test_select_truck_then_appointments_page(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    at = _run("pages/6_Appointments.py")
+    assert any("No trucks picked" in str(i.value) for i in at.info)
+    res = _run("pages/3_Results.py", run_id)
+    pick = next(b for b in res.button if b.label == "Select this truck")
+    pick.click().run()
+    assert not res.exception, res.exception
+    assert any(b.label == "✓ Selected" for b in res.button)
+    rows = db_env.list_appointments()
+    assert rows and {r["run_id"] for r in rows} == {run_id}
+    db_env.update_appointments({rows[0]["id"]: {"status": "Declined", "note": "no dock"}})
+    ap = _run("pages/6_Appointments.py")
+    assert ap.title[0].value == "Appointments"
+    assert any("Declined" in m.label for m in ap.metric)
+    save = next(b for b in ap.button if b.label.startswith("Save "))
+    save.click().run()
+    assert not ap.exception, ap.exception
+    # add a stop by hand: a shipment that is not in the upload, typed in
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("MANUAL1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Walk-in Co")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input("1 Test St, Rialto")
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert not ap.exception, ap.exception
+    added = [r for r in db_env.list_appointments() if r["shipment_id"] == "MANUAL1"]
+    assert added and added[0]["customer"] == "Walk-in Co"
+    reopt = next(b for b in ap.button if b.label.startswith("Re-optimize "))
+    assert not reopt.disabled
+    reopt.click().run()
+    assert not ap.exception, ap.exception
+    after = db_env.list_appointments()
+    assert any(r["stage"] == "reoptimized" for r in after)
+    assert any(r["status"] == "Declined" and r["stage"] != "reoptimized" for r in after)
+    assert any("Re-optimized" in str(sv.value) for sv in ap.success)
+    # take one stop out of the re-plan
+    before = sum(r["stage"] == "reoptimized" for r in db_env.list_appointments())
+    pick = next(m for m in ap.multiselect if m.label == "Stops to remove")
+    pick.set_value([pick.options[0]]).run()
+    next(b for b in ap.button if b.label == "Remove 1 stop(s)").click().run()
+    assert not ap.exception, ap.exception
+    assert sum(r["stage"] == "reoptimized" for r in db_env.list_appointments()) < before
+    # discard it: the button needs the confirmation first
+    discard = next(b for b in ap.button if b.label.startswith("Discard re-optimization"))
+    assert discard.disabled
+    next(c for c in ap.checkbox if c.label == "Yes, discard it").check().run()
+    next(b for b in ap.button if b.label.startswith("Discard re-optimization")).click().run()
+    assert not ap.exception, ap.exception
+    assert not any(r["stage"] == "reoptimized" for r in db_env.list_appointments())
+    reopt_again = next(b for b in ap.button if b.label.startswith("Re-optimize "))
+    reopt_again.click().run()  # it can be re-run afterwards
+    assert any(r["stage"] == "reoptimized" for r in db_env.list_appointments())
+    # a map per load, and the finalized tab with load-ID search
+    next(t for t in ap.toggle if t.label == "Map").set_value(True).run()
+    assert not ap.exception, ap.exception
+    first = db_env.list_appointments()[0]
+    db_env.update_appointments(
+        {r["id"]: {"status": "Confirmed", "load_id": "LD1"} for r in db_env.list_appointments()}
+    )
+    fin = _run("pages/6_Appointments.py")
+    assert any(tab.label.startswith("Finalized") for tab in fin.tabs)
+    next(t for t in fin.text_input if t.label == "Find a load by load ID").input("LD1").run()
+    assert not fin.exception, fin.exception
+    assert any(first["truck"] in str(m.value) for m in fin.markdown)
+    an = _run("pages/7_Analyze.py")  # the results over time moved to Analyze
+    for period in ("Week", "Month", "Year"):
+        next(r for r in an.radio if r.label == "Group by").set_value(period).run()
+        assert not an.exception, an.exception
+
+
+def test_analyze_lflt_aging_tab(db_env: Repository) -> None:
+    import datetime as dt
+
+    from routeopt.analyze import AGING_LEVEL, read_aging_summary, to_records
+
+    from tests.test_analyze import _summary_frame, _xlsx
+
+    at = _run("pages/7_Analyze.py")
+    assert at.title[0].value == "Analyze"
+    for as_of in ("2026-10-29", "2026-10-30"):
+        day, df = read_aging_summary(_xlsx(_summary_frame(as_of)), "a.xlsx", dt.date(2026, 1, 1))
+        db_env.save_aging(AGING_LEVEL, day, to_records(df), "a.xlsx")
+    at = _run("pages/7_Analyze.py")
+    assert len(at.dataframe) >= 2  # the PG30,50,80 and PG20 tables
+    for view in ("PG20 by RDD", "Hold / Requested"):
+        next(r for r in at.radio if r.key == "aging-trend").set_value(view).run()
+        assert not at.exception, at.exception
+
+
+def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
+    import datetime as dt
+
+    from routeopt.analyze import PERF_LEVEL
+
+    from tests.test_analyze import _perf_rows
+
+    db_env.save_aging(PERF_LEVEL, dt.date(2026, 11, 3), _perf_rows("2026-11-03"), "p.xlsx")
+    at = _run("pages/7_Analyze.py")
+    assert any(m.label == "Avg stops per load" for m in at.metric)
+    lift = next(m for m in at.metric if m.label.startswith("vs baseline"))
+    assert lift.value == "+75%"  # avg 3.0 stops vs 1.71
+    titles = " ".join(str(m.value) for m in at.markdown)
+    assert "average stops per load by" in titles and "average volume per load by" in titles
+    next(t for t in at.toggle if t.key == "perf-baseline-on").set_value(False).run()
+    assert not at.exception, at.exception
+    for period in ("Day", "Week", "Year"):
+        next(r for r in at.radio if r.key == "perf-period").set_value(period).run()
+        assert not at.exception, at.exception
+
+
+def test_team_viewer_sees_appointments_read_only(
+    db_env: Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import routeopt.share
+    import streamlit as st
+
+    run_id = _saved_run(db_env)
+    from routeopt.appointments import appointment_rows
+
+    rec = db_env.load_run(run_id)
+    truck = next(t for t in rec.plans[0].trucks if any(ld.stops for ld in t.loads))
+    db_env.select_truck_for_appointments(appointment_rows(rec.plans[0], rec.stops, truck.number))
+    monkeypatch.setenv("OPENMILE_ROLE", "viewer")
+    monkeypatch.setattr(routeopt.share, "sync", lambda *a, **k: "same")
+    st.cache_resource.clear()
+    ap = _run("pages/6_Appointments.py")
+    labels = [b.label for b in ap.button]
+    assert not any(lbl.startswith(("Save ", "Re-optimize ", "Remove ")) for lbl in labels)
+    assert any("Team sharing" in str(c.value) for c in ap.sidebar.caption)
+    res = _run("pages/3_Results.py", run_id)
+    assert not any(b.label == "Select this truck" for b in res.button)
+    an = _run("pages/7_Analyze.py")
+    assert not an.exception
+
+
+def test_analyze_refresh_panel_shows_for_editors_not_viewers(
+    db_env: Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import routeopt.share
+    import streamlit as st
+
+    at = _run("pages/7_Analyze.py")
+    assert not at.exception, at.exception
+    assert any(e.label == "Refresh from Oracle" for e in at.expander)
+    assert any(b.label == "Refresh all" for b in at.button)
+    assert next(b for b in at.button if b.label == "Refresh all").disabled  # no oracle.toml here
+    monkeypatch.setenv("OPENMILE_ROLE", "viewer")
+    monkeypatch.setattr(routeopt.share, "sync", lambda *a, **k: "same")
+    st.cache_resource.clear()
+    view = _run("pages/7_Analyze.py")
+    assert not any(b.label == "Refresh all" for b in view.button)
+
+
+def test_new_run_has_the_oracle_candidates_button(db_env: Repository) -> None:
+    at = _run("pages/2_New_Run.py")
+    assert any(e.label.startswith("…or get the candidates") for e in at.expander)
+    btn = next(b for b in at.button if b.label == "Get candidates from Oracle")
+    assert btn.disabled  # no oracle.toml in the repository checkout
+
+
+def test_appointments_same_address_joins_and_save_recomputes_miles(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    res = _run("pages/3_Results.py", run_id)
+    next(b for b in res.button if b.label == "Select this truck").click().run()
+    ap = _run("pages/6_Appointments.py")
+    before = db_env.list_appointments()
+    truck = before[0]["truck"]
+    mine = [r for r in before if r["truck"] == truck and r["load_seq"] == 1]
+    target = min(mine, key=lambda r: r["stop_seq"])
+    # a shipment typed in with the address of the load's first stop joins that stop
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("JOINME1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Same Place")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input(target["address"].upper())
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert not ap.exception, ap.exception
+    joined = next(r for r in db_env.list_appointments() if r["shipment_id"] == "JOINME1")
+    assert joined["stop_seq"] == target["stop_seq"]
+    assert joined["miles_from_prev"] == target["miles_from_prev"]  # worked out, not 0
+    # the miles of a stop are worked out again after the order was changed and saved
+    stops = sorted({r["stop_seq"] for r in mine})
+    if len(stops) >= 2:
+        db_env.update_appointments(
+            {r["id"]: {"miles_from_prev": 0.0} for r in db_env.list_appointments()}
+        )
+        next(b for b in ap.button if b.label.startswith("Save ")).click().run()
+        assert not ap.exception, ap.exception
+        after = [r for r in db_env.list_appointments() if r["truck"] == truck]
+        assert any(r["miles_from_prev"] > 0 for r in after)
+
+
+def test_appointments_remove_shipments_added_by_hand(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    res = _run("pages/3_Results.py", run_id)
+    next(b for b in res.button if b.label == "Select this truck").click().run()
+    ap = _run("pages/6_Appointments.py")
+    before = len(db_env.list_appointments())
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("HAND1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Walk-in Co")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input("1 Test St, Rialto")
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert len(db_env.list_appointments()) == before + 1
+    pick = next(m for m in ap.multiselect if m.label == "Shipments to remove")
+    assert len(pick.options) == 1 and "HAND1" in pick.options[0]
+    pick.set_value([pick.options[0]]).run()
+    next(b for b in ap.button if b.label == "Remove 1 shipment(s)").click().run()
+    assert not ap.exception, ap.exception
+    assert len(db_env.list_appointments()) == before
+    assert not any(r["shipment_id"] == "HAND1" for r in db_env.list_appointments())
