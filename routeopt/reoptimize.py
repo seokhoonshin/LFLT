@@ -31,7 +31,12 @@ def declined_stop_ids(rows: list[dict[str, Any]]) -> set[str]:
     by_stop: dict[str, list[str]] = {}
     for r in rows:
         by_stop.setdefault(r["stop_id"], []).append(r["status"])
-    return {sid for sid, statuses in by_stop.items() if stop_outcome(statuses) == "Declined"}
+    # declined, or every shipment cancelled by the customer: left out of the re-plan
+    return {
+        sid
+        for sid, statuses in by_stop.items()
+        if stop_outcome(statuses) in ("Declined", "Cancelled")
+    }
 
 
 def replan(

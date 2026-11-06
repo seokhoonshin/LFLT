@@ -16,7 +16,9 @@ from itertools import groupby
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from routeopt.appointment_miles import MilesCalculator, chain_miles, merge_and_renumber
 from routeopt.appointments import (
+    DROPPED,
     EXPORT_COLUMNS,
     STATUSES,
     appointment_rows,
@@ -38,6 +40,7 @@ from routeopt.domain import N_DEPOTS, SITE_NODE
 from routeopt.export.mapping import load_map_html
 from routeopt.reoptimize import declined_stop_ids, replan
 from routeopt.travel import planning_matrix
+from routeopt.travel.haversine import HaversineProvider
 from routeopt.travel.osrm import OSRMProvider
 
 from _common import (
@@ -116,7 +119,7 @@ def pickups_for(stage_rows: list[dict]) -> dict[tuple[str, str, int], str]:
     out: dict[tuple[str, str, int], str] = {}
     firsts: dict[tuple[str, str, int], dict] = {}
     for s in group_by_stop(stage_rows):
-        if s["stop_seq"] >= 900 or s["status"] == "Declined":
+        if s["stop_seq"] >= 900 or s["status"] in DROPPED:
             continue
         key = (s["run_id"], s["truck"], s["load_seq"])
         if key not in firsts or s["stop_seq"] < firsts[key]["stop_seq"]:
@@ -187,6 +190,12 @@ def table_rows(load_items: list[dict], pickup: str | None = None) -> list[dict]:
     return out
 
 
+def ids_width(col: pd.Series) -> int:
+    """Pixel width that shows the longest list of shipment IDs on one line."""
+    longest = max((len(str(v)) for v in col if v), default=10)
+    return min(max(120, int(longest * 7.6) + 24), 2400)
+
+
 def _clean(v: object) -> str | None:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -242,6 +251,57 @@ def truck_key(r: dict) -> tuple[str, int, str]:
     return (r["run_id"], r["version"], r["truck"])
 
 
+def calculator(run_id: str) -> MilesCalculator | None:
+    """Miles between the run's warehouse / stops (None when the run is not on this PC)."""
+    try:
+        rec = load_record(run_id)
+    except LookupError:
+        return None
+    cfg = get_config()
+    provider = (
+        OSRMProvider(cfg.osrm_url, timeout_s=cfg.osrm_timeout_s)
+        if osrm_healthy()
+        else HaversineProvider()
+    )
+    return MilesCalculator(
+        rec.matrix,
+        {s.stop_id: i + N_DEPOTS for i, s in enumerate(rec.stops)},
+        {s.stop_id: f"{s.address}, {s.city} {s.zip}" for s in rec.stops},
+        provider,
+    )
+
+
+def tidy_truck(run_id: str, truck: str, stage: str) -> None:
+    """After a Save / an added stop: stops at one address become one stop, the stops are
+    numbered 1..n, and 'Miles from prev' is worked out again for the new order."""
+    mine = [
+        r
+        for r in repo.list_appointments()
+        if r["run_id"] == run_id and r["truck"] == truck and (r.get("stage") or "original") == stage
+    ]
+    calc = calculator(run_id)
+    changes: dict[int, dict[str, object]] = {}
+    for load_seq in sorted({r["load_seq"] for r in mine}):
+        load_rows = [r for r in mine if r["load_seq"] == load_seq]
+        moved = merge_and_renumber(load_rows)
+        for r in load_rows:  # the new order, before the miles are worked out
+            r.update(moved.get(r["id"], {}))
+            if r["id"] in moved:
+                changes.setdefault(r["id"], {}).update(moved[r["id"]])
+        if calc is None:
+            continue
+        for row_id, miles in chain_miles(load_rows, calc.miles).items():
+            if miles is not None:
+                changes.setdefault(row_id, {})["miles_from_prev"] = miles
+    if changes:
+        repo.update_appointments(changes)
+    if calc is not None and calc.unlocated:
+        st.session_state["miles_warning"] = (
+            "Could not find a position for: " + "; ".join(calc.unlocated) + ". Its miles "
+            "(and the next stop's) were left as they were."
+        )
+
+
 def add_form(stage: str, run_id: str, truck: str, items: list[dict], load_seqs: list[int]) -> None:
     """Add a stop to one of the truck's loads: its shipments and details are copied from
     the run's upload (or typed, for a shipment that was not in it)."""
@@ -279,6 +339,7 @@ def add_form(stage: str, run_id: str, truck: str, items: list[dict], load_seqs: 
                 st.error(str(exc))
             else:
                 repo.add_appointments(new_rows)
+                tidy_truck(run_id, truck, stage)
                 st.toast(
                     f"{len(new_rows)} shipment(s) added to {truck} load {load_seq} "
                     f"(stop {new_rows[-1]['stop_seq'] + 1})."
@@ -315,7 +376,7 @@ def load_map(run_id: str, load_items: list[dict]) -> None:
         return
     points, missing = [], 0
     for s in sorted(group_by_stop(load_items), key=lambda x: x["stop_seq"]):
-        if s["stop_seq"] >= 900 or s["status"] == "Declined":
+        if s["stop_seq"] >= 900 or s["status"] in DROPPED:
             continue
         stop = by_id.get(s["stop_id"])
         if stop is None or stop.latitude is None:
@@ -393,17 +454,17 @@ def render(stage_rows: list[dict], stage: str) -> None:
         file_name=f"appointments_{day.isoformat()}_{stage}_all_loads.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Per load: the warehouse as stop 1 (load total volume), then its stops. "
-        "Declined stops are left out. Each load also has its own button below.",
+        "Declined and cancelled stops are left out. Each load also has its own button below.",
         key=f"dl-all-{stage}",
     )
     for (run_id, version, truck), group in groupby(stage_rows, key=truck_key):
         items = list(group)
         stops_here = group_by_stop(items)
         done = sum(s["status"] == "Confirmed" for s in stops_here)
-        declined = sum(s["status"] == "Declined" for s in stops_here)
+        declined = sum(s["status"] in DROPPED for s in stops_here)
         st.markdown(
             f"#### {truck} · {done}/{len(stops_here)} stops confirmed"
-            + (f" · {declined} declined" if declined else "")
+            + (f" · {declined} declined / cancelled" if declined else "")
         )
         st.caption(
             f"Run {run_id} · v{version} · from {origin_label(items[0]['dc'])} · "
@@ -448,12 +509,16 @@ def render(stage_rows: list[dict], stage: str) -> None:
                         ),
                         "APPT #": st.column_config.TextColumn("APPT #"),
                         "Note": st.column_config.TextColumn("Note"),
-                        "Shipment IDs": st.column_config.TextColumn("Shipment IDs", width="medium"),
+                        "Shipment IDs": st.column_config.TextColumn(
+                            "Shipment IDs", width=ids_width(df["Shipment IDs"])
+                        ),
                         "Status": st.column_config.SelectboxColumn(
                             "Status",
                             options=STATUSES,
                             help="No response = requested, no answer yet (still open). "
-                            "Declined = the customer can't take it that day (dropped).",
+                            "Declined = the customer can't take it that day (dropped). "
+                            "Customer order cancel = the customer cancelled the order (the "
+                            "shipment is taken off the stop and the truck).",
                         ),
                     },
                     key=f"ed-{stage}-{view}-{run_id}-{truck}-{load_seq}",
@@ -485,6 +550,7 @@ def render(stage_rows: list[dict], stage: str) -> None:
                         for row_id in row_ids:
                             changes[int(row_id)] = values
                 n = repo.update_appointments(changes)
+                tidy_truck(run_id, truck, stage)
                 st.toast(f"{truck}: {n} change(s) saved.")
                 st.rerun()
         load_tools(stage, stage_rows, run_id, truck, items, load_seqs)
@@ -561,6 +627,8 @@ def render_final(final_rows: list[dict], stage: str = "finalized") -> None:
 
 if note := st.session_state.pop("replan_note", None):
     st.success(note)
+if warn := st.session_state.pop("miles_warning", None):
+    st.warning(warn)
 day_orig = [r for r in day_rows if not is_reopt(r)]
 day_reopt = [r for r in day_rows if is_reopt(r)]
 all_final = finalized_rows(rows)

@@ -253,3 +253,33 @@ def test_new_run_has_the_oracle_candidates_button(db_env: Repository) -> None:
     assert any(e.label.startswith("…or get the candidates") for e in at.expander)
     btn = next(b for b in at.button if b.label == "Get candidates from Oracle")
     assert btn.disabled  # no oracle.toml in the repository checkout
+
+
+def test_appointments_same_address_joins_and_save_recomputes_miles(db_env: Repository) -> None:
+    run_id = _saved_run(db_env)
+    res = _run("pages/3_Results.py", run_id)
+    next(b for b in res.button if b.label == "Select this truck").click().run()
+    ap = _run("pages/6_Appointments.py")
+    before = db_env.list_appointments()
+    truck = before[0]["truck"]
+    mine = [r for r in before if r["truck"] == truck and r["load_seq"] == 1]
+    target = min(mine, key=lambda r: r["stop_seq"])
+    # a shipment typed in with the address of the load's first stop joins that stop
+    next(t for t in ap.text_input if t.label == "Shipment ID(s)").input("JOINME1")
+    next(t for t in ap.text_input if t.label.startswith("Customer")).input("Same Place")
+    next(t for t in ap.text_input if t.label.startswith("Address")).input(target["address"].upper())
+    next(b for b in ap.button if b.label == "Add stop as last stop").click().run()
+    assert not ap.exception, ap.exception
+    joined = next(r for r in db_env.list_appointments() if r["shipment_id"] == "JOINME1")
+    assert joined["stop_seq"] == target["stop_seq"]
+    assert joined["miles_from_prev"] == target["miles_from_prev"]  # worked out, not 0
+    # the miles of a stop are worked out again after the order was changed and saved
+    stops = sorted({r["stop_seq"] for r in mine})
+    if len(stops) >= 2:
+        db_env.update_appointments(
+            {r["id"]: {"miles_from_prev": 0.0} for r in db_env.list_appointments()}
+        )
+        next(b for b in ap.button if b.label.startswith("Save ")).click().run()
+        assert not ap.exception, ap.exception
+        after = [r for r in db_env.list_appointments() if r["truck"] == truck]
+        assert any(r["miles_from_prev"] > 0 for r in after)

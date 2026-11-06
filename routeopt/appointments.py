@@ -17,7 +17,19 @@ from routeopt.domain import SITE_BY_CODE, Plan, Stop, clock
 
 # in order of progress ("No response": requested, the customer has not answered); a stop
 # whose shipments differ shows the least advanced one
-STATUSES = ["Not requested", "Requested", "Pending", "No response", "Confirmed", "Declined"]
+CANCEL = "Customer order cancel"  # the customer cancelled the order: the shipment is gone
+STATUSES = [
+    "Not requested",
+    "Requested",
+    "Pending",
+    "No response",
+    "Confirmed",
+    "Declined",
+    CANCEL,
+]
+# a stop with one of these is not driven: left out of exports, pickup times, the miles chain
+# and a re-plan
+DROPPED = ("Declined", CANCEL)
 # a stop's outcome: confirmed when every shipment is, declined (the customer can't take
 # it that day; dropped from the route) when any is, else still open
 OUTCOMES = ["Confirmed", "Declined", "Open"]
@@ -63,6 +75,12 @@ def appointment_rows(plan: Plan, stops: list[Stop], truck_number: str) -> list[d
 
 
 def stop_outcome(statuses: list[str]) -> str:
+    """Confirmed / Declined / Open - or Cancelled when every shipment of the stop was cancelled
+    by the customer (a cancelled shipment alone does not change what the others decide)."""
+    live = [x for x in statuses if x != CANCEL]
+    if statuses and not live:
+        return "Cancelled"
+    statuses = live
     if statuses and all(s == "Confirmed" for s in statuses):
         return "Confirmed"
     if any(s == "Declined" for s in statuses):
@@ -93,7 +111,8 @@ def stop_outcomes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for st in stops.values():
         st["outcome"] = stop_outcome(st.pop("statuses"))
-        out.append(st)
+        if st["outcome"] != "Cancelled":  # a cancelled order is not appointment demand
+            out.append(st)
     return out
 
 
@@ -116,12 +135,14 @@ def outcome_summary(stops: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
 
 def stop_status(statuses: list[str]) -> str:
     """One status for a stop: the shared one, else the least advanced (so a stop shows
-    Confirmed only when every shipment is; any Declined wins)."""
-    if "Declined" in statuses:
+    Confirmed only when every shipment is; any Declined wins; cancelled shipments do not
+    count unless they are all the stop has)."""
+    live = [x for x in statuses if x != CANCEL] or statuses
+    if "Declined" in live:
         return "Declined"
-    if len(set(statuses)) == 1:
-        return statuses[0]
-    return min(statuses, key=STATUSES.index)
+    if len(set(live)) == 1:
+        return live[0]
+    return min(live, key=STATUSES.index)
 
 
 def group_by_stop(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -152,6 +173,8 @@ def group_by_stop(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         st["ids"].append(r["id"])
         st["shipment_ids"].append(r["shipment_id"])
         st["volume_cuft"] += r["volume_cuft"] or 0.0
+        if r["status"] != CANCEL:
+            st["live_volume"] = st.get("live_volume", 0.0) + (r["volume_cuft"] or 0.0)
         st["statuses"].append(r["status"])
         if r.get("note") and r["note"] not in st["notes"]:
             st["notes"].append(r["note"])
@@ -163,7 +186,8 @@ def group_by_stop(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for st in stops.values():
         st["shipments"] = len(st["ids"])
-        st["volume_cuft"] = round(st["volume_cuft"], 1)
+        # cancelled shipments are no longer on the truck (all cancelled: show what it was)
+        st["volume_cuft"] = round(st.pop("live_volume", st["volume_cuft"]), 1)
         st["status"] = stop_status(st.pop("statuses"))
         st["note"] = " | ".join(st.pop("notes"))
         st["bill_to_code"] = ", ".join(st.pop("bill_tos")) or None
@@ -223,7 +247,7 @@ def load_sheet_rows(
 ) -> list[dict]:
     """One load's export rows from its ``group_by_stop`` rows: the warehouse as stop 1,
     then the customer stops renumbered 2..n (declined stops left out by default)."""
-    kept = [s for s in stops if not (exclude_declined and s["status"] == "Declined")]
+    kept = [s for s in stops if not (exclude_declined and s["status"] in DROPPED)]
     if not stops:
         return []
     first = stops[0]
@@ -306,6 +330,16 @@ def export_stops_by_load(
     return buf.getvalue()
 
 
+_ADDR_NOISE = {"USA", "US", "CA", "NV", "AZ"}  # country / the states the plans run in
+
+
+def norm_address(text: str | None) -> str:
+    """An address as a comparison key: upper case, no punctuation, no country / state word
+    ("1270 Goodrich Blvd, Commerce CA 90022 USA" == "1270 GOODRICH BLVD COMMERCE 90022")."""
+    words = re.sub(r"[^A-Z0-9 ]+", " ", (text or "").upper()).split()
+    return " ".join(w for w in words if w not in _ADDR_NOISE)
+
+
 def manual_rows(
     load_rows: list[dict[str, Any]],
     stops: list[Stop],
@@ -343,6 +377,11 @@ def manual_rows(
     }
     out: list[dict[str, Any]] = []
     seq_of: dict[str, int] = {r["stop_id"]: r["stop_seq"] for r in live}
+    # one address = one stop: a stop the load already has at that address is joined, and
+    # shipments typed in one go for the same address share one new stop
+    at_address: dict[str, tuple[int, str]] = {}
+    for r in sorted(live, key=lambda x: x["stop_seq"]):
+        at_address.setdefault(norm_address(r["address"]), (r["stop_seq"], r["stop_id"]))
     done: set[str] = set()
     for sid in wanted:
         if sid in on_load or sid in done:
@@ -354,13 +393,19 @@ def manual_rows(
                 raise ValueError(
                     f"{sid} is not in this run's upload: enter its customer and address to add it."
                 )
-            last += 1
+            key = norm_address(str(manual["address"]))
+            if key in at_address:
+                seq, stop_id = at_address[key]
+            else:
+                last += 1
+                seq, stop_id = last, f"M-{sid}"[:32]
+                at_address[key] = (seq, stop_id)
             out.append(
                 common
                 | {
                     "shipment_id": sid,
-                    "stop_id": f"M-{sid}"[:32],
-                    "stop_seq": last,
+                    "stop_id": stop_id,
+                    "stop_seq": seq,
                     "customer": str(manual["customer"]),
                     "address": str(manual["address"]),
                     "bill_to_code": None,
@@ -370,9 +415,14 @@ def manual_rows(
             )
             done.add(sid)
             continue
+        full_address = f"{stop.address}, {stop.city} {stop.zip}"
         if stop.stop_id not in seq_of:
-            last += 1
-            seq_of[stop.stop_id] = last
+            if norm_address(full_address) in at_address:  # same address as a stop on the load
+                seq_of[stop.stop_id] = at_address[norm_address(full_address)][0]
+            else:
+                last += 1
+                seq_of[stop.stop_id] = last
+                at_address[norm_address(full_address)] = (last, stop.stop_id)
         for sh in stop.shipments:  # the whole stop
             if sh.shipment_id in on_load or sh.shipment_id in done:
                 continue
@@ -383,7 +433,7 @@ def manual_rows(
                     "stop_id": stop.stop_id,
                     "stop_seq": seq_of[stop.stop_id],
                     "customer": sh.customer_name,
-                    "address": f"{stop.address}, {stop.city} {stop.zip}",
+                    "address": full_address,
                     "bill_to_code": sh.bill_to_code,
                     "volume_cuft": round(sh.volume_cuft, 2),
                     "poc": stop.contact,
@@ -421,7 +471,8 @@ def finalized_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     final = [
         {**r, "stage": "finalized"}
         for r in current
-        if stop_outcome(statuses[(r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])])
+        if r["status"] != CANCEL
+        and stop_outcome(statuses[(r["run_id"], r["truck"], r["load_seq"], r["stop_seq"])])
         == "Confirmed"
     ]
     return sorted(

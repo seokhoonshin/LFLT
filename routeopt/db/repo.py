@@ -795,15 +795,25 @@ class Repository:
             return [{c: getattr(r, c) for c in cols} for r in rows]
 
     def update_appointments(self, changes: dict[int, dict[str, Any]]) -> int:
-        """Set status / note / load id / appointment # / stop order by row id; returns the
-        number of values changed."""
+        """Set status / note / load id / appointment # / stop order (and the stop id and miles
+        from the previous stop, after a re-order) by row id; returns the number of values
+        changed."""
         n = 0
         with self._sf() as session, session.begin():
             for row_id, values in changes.items():
                 r = session.get(AppointmentRow, row_id)
                 if r is None:
                     continue
-                for key in ("status", "note", "load_id", "appt_num", "appt_time", "stop_seq"):
+                for key in (
+                    "status",
+                    "note",
+                    "load_id",
+                    "appt_num",
+                    "appt_time",
+                    "stop_seq",
+                    "stop_id",
+                    "miles_from_prev",
+                ):
                     if key in values and getattr(r, key) != values[key]:
                         setattr(r, key, values[key])
                         n += 1

@@ -204,6 +204,15 @@ Query settings such as the start date are `params` in `queries.toml` (bind varia
 `:start_date` in the SQL).  Only SELECT statements are run.  In a team setup, the refresh
 button is on editor PCs only; viewers get the results through the shared branch.
 
+**Editing a load on Appointments**: stops at one address are one stop (a stop added by hand
+at an address the load already has joins it; *Save* also joins same-address stops), and after
+every *Save* / added stop the stops are numbered 1..n and *Miles from prev* is worked out
+again (warehouse -> stop 1 -> stop 2 ...; the run's road distances for its own stops, a lookup
+of the address for a stop typed in by hand). Status **Customer order cancel** takes a
+shipment off the truck: it is left out of the stop volume, the exports and the Finalized tab,
+and is not counted as a decline on Analyze (a stop with all its shipments cancelled is left
+out like a declined one).
+
 ### Team sharing (Appointments and Analyze)
 
 Everyone runs OpenMile on their own PC from a **git clone** (not a ZIP).  Set the role in
