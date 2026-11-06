@@ -150,9 +150,12 @@ for truck in plan.trucks:
     loads = [load for load in truck.loads if load.stops]
     if not loads:
         continue
+    volume = sum(load.load_out_volume for load in loads)
+    capacity = sum(settings.load_cap_cuft(load.pallet) for load in loads)
     title = (
         f"{truck.number} · {truck.driver_name or 'no driver'} — {len(loads)} load(s), "
-        f"{sum(len(load.stops) for load in loads)} stops, on duty {minutes_text(truck.on_duty_minutes)} "
+        f"{sum(len(load.stops) for load in loads)} stops, "
+        f"{volume:,.0f} cu ft ({100 * volume / capacity:.0f}%), on duty {minutes_text(truck.on_duty_minutes)} "
         f"(start {clock(truck.start_s if truck.start_s is not None else loads[0].depart_s)}"
         f" → back {clock(loads[-1].return_s)}), lunch {truck.lunch.where}"
     )
