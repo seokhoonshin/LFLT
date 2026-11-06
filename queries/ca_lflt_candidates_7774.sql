@@ -1,4 +1,4 @@
--- [Plan ID 7774 전용] CA LFLT 후보 추출: 모레(주말이면 월요일) 배송 기준, RouteOpt 업로드 형식
+-- [Plan ID 7774 전용] CA LFLT 후보 추출: 배송일 기준(월→수, 화→목, 수→금, 목→다음주 월, 금→다음주 화), RouteOpt 업로드 형식
 -- 미배정(LD_LEG_DETL_T 400번대) + Open 로드(LD_LEG_T 300, 서비스 미정 포함). 볼륨 = VOLUME x PIECES
 -- OBS·BEST BUY 제외 / 주소 표준화(같은 위치 = 같은 스톱) / HA + Memo PALLETIZE = 팔레트
 -- 볼륨 한도는 스톱 단위: 같은 출발 DC → 같은 도착 주소인 후보 Shipment 합계 (RouteOpt의 스톱과 동일 기준)
@@ -13,9 +13,12 @@
 -- [기간 제한 없음 · 속도 개선 버전] 현재 미배정·Open 건만 인덱스로 먼저 찾고, 중간 결과를 한 번만 계산(MATERIALIZE)
 -- 실행: DBeaver에서 전체 선택(Ctrl + A) 후 Ctrl + Enter
 WITH p AS (
-    SELECT TRUNC(SYSDATE) + 2
-           + CASE TO_CHAR(TRUNC(SYSDATE) + 2, 'DY', 'NLS_DATE_LANGUAGE=ENGLISH')
-                  WHEN 'SAT' THEN 2 WHEN 'SUN' THEN 1 ELSE 0 END AS D    -- ← 배송일 (RouteOpt Plan date)
+    -- ← 배송일 (RouteOpt Plan date): 월→수, 화→목, 수→금, 목→다음주 월, 금→다음주 화 (토·일에 돌리면 수요일)
+    SELECT TRUNC(SYSDATE)
+           + CASE TO_CHAR(TRUNC(SYSDATE), 'DY', 'NLS_DATE_LANGUAGE=ENGLISH')
+                  WHEN 'MON' THEN 2 WHEN 'TUE' THEN 2 WHEN 'WED' THEN 2
+                  WHEN 'THU' THEN 4 WHEN 'FRI' THEN 4
+                  WHEN 'SAT' THEN 4 WHEN 'SUN' THEN 3 END AS D
     FROM dual
 ),
 st AS (                                -- STAT_T 기준

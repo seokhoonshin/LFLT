@@ -71,7 +71,7 @@ with st.expander("…or get the candidates straight from Oracle", expanded=False
     if not os.environ.get("ORACLE_PASSWORD"):
         _pw = st.text_input("Oracle password (this session only)", type="password", key="nr-pw")
     st.caption(
-        "Runs the candidates query (day after tomorrow, Mondays after weekends; the "
+        "Runs the candidates query (delivery day: Mon→Wed, Tue→Thu, Wed→Fri, Thu→next Mon, Fri→next Tue; the "
         "conditions are in `queries/ca_lflt_candidates.sql`) and uses the result as the "
         "workbook. It can take a minute."
     )
