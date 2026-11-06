@@ -198,6 +198,8 @@ def test_analyze_lflt_performance_tab(db_env: Repository) -> None:
     assert any(m.label == "Avg stops per load" for m in at.metric)
     lift = next(m for m in at.metric if m.label.startswith("vs baseline"))
     assert lift.value == "+75%"  # avg 3.0 stops vs 1.71
+    titles = " ".join(str(m.value) for m in at.markdown)
+    assert "average stops per load by" in titles and "average volume per load by" in titles
     next(t for t in at.toggle if t.key == "perf-baseline-on").set_value(False).run()
     assert not at.exception, at.exception
     for period in ("Day", "Week", "Year"):
