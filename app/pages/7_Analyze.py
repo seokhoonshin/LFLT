@@ -383,6 +383,37 @@ def perf_view() -> None:
         layers = layers + base_line + base_tag
     st.markdown(f"##### LFLT — average stops per load by {period.lower()}")
     st.altair_chart(layers.properties(height=360), use_container_width=True)
+    if "VOLUME" in cur:
+        vol_top = max(float(by["AVG_VOLUME"].max()), 1.0) * 1.2
+        vol_bars = (
+            alt.Chart(by)
+            .mark_bar(
+                color=PERF_BAR,
+                size=40 if len(order) < 15 else 14,
+                cornerRadiusTopLeft=3,
+                cornerRadiusTopRight=3,
+            )
+            .encode(
+                x=alt.X("PERIOD:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y(
+                    "AVG_VOLUME:Q",
+                    title="Avg volume per load (cu ft)",
+                    scale=alt.Scale(domain=[0, vol_top]),
+                    axis=alt.Axis(grid=True),
+                ),
+                tooltip=[
+                    alt.Tooltip("PERIOD:N", title=period),
+                    alt.Tooltip("AVG_VOLUME:Q", title="Avg cu ft / load", format=",.0f"),
+                    alt.Tooltip("LOADS:Q", title="Loads"),
+                    alt.Tooltip("AVG_STOPS:Q", title="Avg stops / load", format=".2f"),
+                ],
+            )
+        )
+        vol_labels = vol_bars.mark_text(dy=-8, color="#555", fontSize=11).encode(
+            text=alt.Text("AVG_VOLUME:Q", format=",.0f")
+        )
+        st.markdown(f"##### LFLT — average volume per load by {period.lower()}")
+        st.altair_chart((vol_bars + vol_labels).properties(height=300), use_container_width=True)
     with st.expander("Table view"):
         show = by.drop(columns=["START"]).rename(
             columns={
